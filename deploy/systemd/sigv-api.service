@@ -1,0 +1,63 @@
+# Service systemd de l'API SIGV.
+#
+#   sudo cp deploy/systemd/sigv-api.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sigv-api
+#
+# Adaptez les chemins si l'application n'est pas installée dans /home/sigv/sigv-backend.
+
+[Unit]
+Description=SIGV Backend API (FastAPI/uvicorn)
+Documentation=file:///home/sigv/sigv-backend/DEPLOYMENT.md
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=exec
+User=sigv
+Group=sigv
+WorkingDirectory=/home/sigv/sigv-backend
+EnvironmentFile=/home/sigv/sigv-backend/.env
+# `ProtectSystem=strict` rend l'arborescence en lecture seule : Python ne doit pas
+# tenter d'y écrire du bytecode. Sortie non tamponnée pour que journald voie les
+# logs en temps réel.
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+# Le schéma suit le code déployé : migration avant chaque démarrage. Sur une
+# instance unique, c'est suffisant ; avec plusieurs instances, retirez cette ligne
+# et jouez `alembic upgrade head` une seule fois lors du déploiement.
+ExecStartPre=/home/sigv/sigv-backend/.venv/bin/alembic upgrade head
+
+# uvicorn lit WEB_CONCURRENCY dans l'environnement pour son nombre de workers.
+# --proxy-headers : l'IP client et le schéma https viennent de nginx.
+# --no-access-log : RequestContextMiddleware trace déjà chaque requête en JSON.
+ExecStart=/home/sigv/sigv-backend/.venv/bin/uvicorn app.main:app \
+    --host 127.0.0.1 \
+    --port 8000 \
+    --proxy-headers \
+    --forwarded-allow-ips 127.0.0.1 \
+    --no-access-log
+
+Restart=always
+RestartSec=5
+# Le préchargement du modèle PaddleOCR prend plusieurs dizaines de secondes sur
+# un petit VPS : sans cette marge, systemd tuerait le service avant qu'il ne serve.
+TimeoutStartSec=180
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# --- Durcissement ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# Seuls les répertoires réellement écrits : fichiers déposés, cache des modèles
+# PaddleOCR, et bytecode Python.
+ReadWritePaths=/home/sigv/sigv-backend/storage /home/sigv/.paddlex /home/sigv/.cache
+
+[Install]
+WantedBy=multi-user.target

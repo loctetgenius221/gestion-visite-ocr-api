@@ -9,10 +9,14 @@ wheels/
 # Virtual environments
 .venv
 
-# Secrets — seul .env.example est versionné
+# Secrets — seuls les modèles `*.example` sont versionnés
 .env
 .env.*
 !.env.example
+!.env.production.example
+
+# SQL généré par `alembic upgrade --sql` : artefact local, régénérable.
+migration.sql
 
 # Fichiers uploadés (images MRZ, signatures) : données personnelles, jamais versionnées
 storage/

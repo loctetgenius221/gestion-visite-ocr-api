@@ -5,12 +5,14 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import anyio
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.config import settings
-from app.core.database import dispose_engine
+from app.core.database import dispose_engine, engine
 from app.core.handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
@@ -54,6 +56,13 @@ def create_app() -> FastAPI:
         ),
         version="0.1.0",
         lifespan=lifespan,
+        # Le schéma OpenAPI décrit toute la surface d'attaque de l'API : il n'a rien
+        # à faire en production (`ENABLE_DOCS` permet de le rouvrir ponctuellement).
+        docs_url="/docs" if settings.docs_enabled else None,
+        redoc_url="/redoc" if settings.docs_enabled else None,
+        openapi_url="/openapi.json" if settings.docs_enabled else None,
+        # Renseigné quand le proxy monte l'API sous un sous-chemin.
+        root_path=settings.ROOT_PATH,
         responses={
             400: {"model": ErrorResponse, "description": "Requête malformée"},
             401: {"model": ErrorResponse, "description": "Non authentifié"},
@@ -65,6 +74,12 @@ def create_app() -> FastAPI:
     )
 
     application.add_middleware(RequestContextMiddleware)
+    if "*" not in settings.trusted_hosts_list:
+        # Bloque les requêtes portant un `Host` étranger au domaine servi : sans ce
+        # contrôle, un attaquant peut empoisonner les URLs absolues générées.
+        application.add_middleware(
+            TrustedHostMiddleware, allowed_hosts=settings.trusted_hosts_list
+        )
     application.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,
@@ -89,20 +104,47 @@ def create_app() -> FastAPI:
 
     @application.get("/health", tags=["Health"], summary="Sonde de disponibilité")
     async def health() -> dict[str, str]:
+        """Sonde de *liveness* : le processus répond-il ?
+
+        Volontairement sans accès à la base : c'est cette sonde que Docker
+        interroge, et une base momentanément indisponible ne doit pas faire tuer
+        et redémarrer un conteneur applicatif parfaitement sain.
+        """
         return {"status": "ok", "environment": settings.ENVIRONMENT}
+
+    @application.get(
+        "/health/ready", tags=["Health"], summary="Sonde de disponibilité des dépendances"
+    )
+    async def readiness() -> dict[str, str]:
+        """Sonde de *readiness* : l'API peut-elle réellement servir du trafic ?
+
+        Répond 503 si la base est injoignable, pour qu'un load balancer sorte
+        l'instance de la rotation au lieu de lui envoyer des requêtes vouées à échouer.
+        """
+        try:
+            async with engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
+        except Exception:
+            logger.exception("Sonde de disponibilité : base injoignable")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Base de données injoignable.",
+            ) from None
+        return {"status": "ok", "database": "ok"}
 
     return application
 
 
 def _mount_storage(application: FastAPI) -> None:
-    """Sert les fichiers uploadés en développement.
+    """Sert les fichiers uploadés hors production.
 
     Sans ce montage, les `mrz_image_url` / `signature_url` renvoyés par l'API
-    pointeraient vers une 404. En production, ces fichiers doivent être servis par
-    le reverse proxy ou un stockage S3 — d'où le montage réservé au hors-production.
+    pointeraient vers une 404. En production, ces fichiers sont servis par le
+    reverse proxy (voir `deploy/nginx/`) ou un stockage S3 — d'où le montage
+    conditionné par `SERVE_STORAGE`.
     """
-    if settings.is_production:
-        logger.info("Stockage local non exposé en production (à servir par le proxy).")
+    if not settings.serve_storage:
+        logger.info("Stockage local non exposé par l'API (à servir par le proxy).")
         return
 
     storage_dir = Path(settings.STORAGE_DIR)

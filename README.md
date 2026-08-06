@@ -6,6 +6,7 @@ zone MRZ (ICAO 9303) de leur pièce d'identité.
 
 Spécification fonctionnelle : [`SPEC_BACKEND_SIGV_OCR_MRZ.md`](SPEC_BACKEND_SIGV_OCR_MRZ.md)
 Décisions techniques : [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md)
+Mise en production : [`DEPLOYMENT.md`](DEPLOYMENT.md)
 
 ---
 
@@ -36,7 +37,7 @@ uv run uvicorn app.main:app --reload
 ```
 
 Documentation interactive : <http://localhost:8000/docs>
-Sonde de disponibilité : <http://localhost:8000/health>
+Sondes : <http://localhost:8000/health> (processus) · <http://localhost:8000/health/ready> (base)
 
 > Le premier démarrage télécharge les modèles PaddleOCR (quelques centaines de Mo).
 > Pour démarrer sans OCR pendant le développement : `OCR_PRELOAD_MODEL=false`.
@@ -189,6 +190,7 @@ Toutes les routes sont préfixées par `/api/v1` et exigent un bearer token, sau
 
 | Domaine | Route |
 |---|---|
+| Santé | `GET /health` · `GET /health/ready` *(hors préfixe `/api/v1`, sans authentification)* |
 | Auth | `POST /auth/login` · `POST /auth/token` · `POST /auth/refresh` · `POST /auth/logout` · `POST /auth/forgot-password` · `GET /me` |
 | OCR | `POST /ocr/scan` |
 | Fichiers | `POST /uploads/signature` |
@@ -272,10 +274,27 @@ logique métier dans la couche HTTP, aucune requête SQL hors des repositories.
 
 ---
 
+## Déploiement
+
+La procédure complète pour un VPS — PostgreSQL, service systemd, Nginx en
+terminaison TLS, sauvegardes — est décrite dans [`DEPLOYMENT.md`](DEPLOYMENT.md).
+Les fichiers de configuration prêts à copier sont dans [`deploy/`](deploy/) et le
+modèle de configuration dans [`.env.production.example`](.env.production.example).
+
+Avec `ENVIRONMENT=production`, l'API applique trois différences notables :
+
+| | Développement | Production |
+|---|---|---|
+| `/docs`, `/openapi.json` | exposés | masqués (`ENABLE_DOCS=true` les rouvre) |
+| `storage/uploads` | servi par l'API | servi par Nginx (`SERVE_STORAGE`) |
+| Configuration | tolérante | démarrage refusé si clé JWT d'exemple, `CORS_ORIGINS=*`, base SQLite ou `DB_ECHO=true` |
+
+---
+
 ## Reste à faire
 
-- **Conteneurisation** (`Dockerfile`, `docker-compose.yml` : `api`, `db`) — reportée
-  en fin de projet.
+- **Conteneurisation** — écartée pour cette version, voir la dernière section de
+  [`DEPLOYMENT.md`](DEPLOYMENT.md).
 - **Envoi réel** du lien de réinitialisation de mot de passe
   ([ADR-006](ARCHITECTURE_DECISIONS.md)).
 - **Test du pipeline OCR sur photo réelle** : le parsing MRZ est validé sur une CNI

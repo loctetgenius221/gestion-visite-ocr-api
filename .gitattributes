@@ -1,0 +1,4 @@
+# Les fichiers de déploiement sont consommés par un Linux : jamais de CRLF, même
+# clonés depuis Windows — nginx et systemd rejettent les lignes terminées en \r\n.
+*.sh text eol=lf
+deploy/** text eol=lf

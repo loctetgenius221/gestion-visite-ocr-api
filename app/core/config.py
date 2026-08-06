@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Valeur livrée dans `.env.example` : utilisable en développement, jamais en production.
+DEV_JWT_SECRET = "changeme-dev-secret-key"
+MIN_JWT_SECRET_LENGTH = 32
 
 
 class Settings(BaseSettings):
@@ -37,6 +42,20 @@ class Settings(BaseSettings):
     # Origines autorisées, séparées par des virgules (ex: "http://localhost:3000,https://app.example.com")
     CORS_ORIGINS: str = "http://localhost:3000"
 
+    # --- Déploiement / reverse proxy ---
+    # Préfixe ajouté par le proxy quand l'API n'est pas montée à la racine
+    # (ex: "/sigv"). Laissé vide dans la configuration nginx fournie.
+    ROOT_PATH: str = ""
+    # Noms d'hôte acceptés, séparés par des virgules. "*" désactive le contrôle ;
+    # renseignez le domaine réel en production pour couper les attaques par
+    # en-tête Host falsifié.
+    TRUSTED_HOSTS: str = "*"
+    # `None` = automatique : documentation exposée hors production, masquée en production.
+    ENABLE_DOCS: bool | None = None
+    # `None` = automatique : l'API sert `storage/uploads` hors production ; en
+    # production ces fichiers sont servis par le reverse proxy.
+    SERVE_STORAGE: bool | None = None
+
     # --- Stockage fichiers ---
     STORAGE_DIR: str = "storage/uploads"
     STORAGE_PUBLIC_BASE_URL: str = "/storage/uploads"
@@ -57,6 +76,16 @@ class Settings(BaseSettings):
     # Bande verticale du document dans laquelle chercher le MRZ (ratio de la hauteur).
     OCR_MRZ_BAND_TOP_RATIO: float = 0.5
 
+    @field_validator("ENABLE_DOCS", "SERVE_STORAGE", mode="before")
+    @classmethod
+    def _blank_means_auto(cls, value: object) -> object:
+        """Traite `VARIABLE=` (présente mais vide) comme « valeur automatique ».
+
+        Sans cela, un `.env` recopié depuis l'exemple sans être complété ferait
+        échouer le démarrage sur une erreur de parsing booléen.
+        """
+        return None if isinstance(value, str) and not value.strip() else value
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
@@ -68,6 +97,60 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT.lower() in {"production", "prod"}
+
+    @property
+    def trusted_hosts_list(self) -> list[str]:
+        return [host.strip() for host in self.TRUSTED_HOSTS.split(",") if host.strip()]
+
+    @property
+    def docs_enabled(self) -> bool:
+        """Expose-t-on `/docs` et `/openapi.json` ? Masqués en production par défaut."""
+        return self.ENABLE_DOCS if self.ENABLE_DOCS is not None else not self.is_production
+
+    @property
+    def serve_storage(self) -> bool:
+        """L'API sert-elle elle-même les fichiers déposés ?
+
+        Non en production : c'est le rôle du reverse proxy, qui sait le faire sans
+        mobiliser un worker applicatif pour chaque image.
+        """
+        return self.SERVE_STORAGE if self.SERVE_STORAGE is not None else not self.is_production
+
+    @model_validator(mode="after")
+    def _reject_unsafe_production_settings(self) -> Settings:
+        """Refuse de démarrer en production avec une configuration de développement.
+
+        Mieux vaut un conteneur qui ne démarre pas — et le dit — qu'une API en
+        ligne signant ses jetons avec la clé publiée dans `.env.example`.
+        """
+        if not self.is_production:
+            return self
+
+        problems: list[str] = []
+        if self.JWT_SECRET_KEY == DEV_JWT_SECRET:
+            problems.append(
+                "JWT_SECRET_KEY porte encore la valeur d'exemple ; générez-en une avec "
+                "`python -c \"import secrets; print(secrets.token_urlsafe(64))\"`"
+            )
+        elif len(self.JWT_SECRET_KEY) < MIN_JWT_SECRET_LENGTH:
+            problems.append(
+                f"JWT_SECRET_KEY doit faire au moins {MIN_JWT_SECRET_LENGTH} caractères"
+            )
+        if "*" in self.cors_origins_list:
+            problems.append(
+                'CORS_ORIGINS ne peut pas valoir "*" : listez les origines réellement autorisées'
+            )
+        if self.DATABASE_URL.startswith("sqlite"):
+            problems.append("DATABASE_URL doit pointer sur PostgreSQL, pas sur SQLite")
+        if self.DB_ECHO:
+            problems.append("DB_ECHO=true déverse le SQL — et les données — dans les logs")
+
+        if problems:
+            raise ValueError(
+                "Configuration de production invalide :\n"
+                + "\n".join(f"  - {problem}" for problem in problems)
+            )
+        return self
 
 
 @lru_cache

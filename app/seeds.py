@@ -14,6 +14,7 @@ import os
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import SessionLocal, dispose_engine
 from app.core.logging import configure_logging, get_logger
 from app.core.security import hash_password
@@ -25,7 +26,26 @@ logger = get_logger(__name__)
 
 # Mot de passe de l'agent de démonstration : surchargeable par variable
 # d'environnement, jamais destiné à un déploiement réel.
-DEFAULT_AGENT_PASSWORD = os.getenv("SEED_AGENT_PASSWORD", "Sigv@2026")
+DEMO_AGENT_PASSWORD = "Sigv@2026"
+MIN_SEED_PASSWORD_LENGTH = 12
+# `or` plutôt qu'un défaut de `getenv` : une variable présente mais vide — cas
+# courant dans un fichier `.env` recopié sans être rempli — ne doit pas créer de
+# comptes sans mot de passe.
+DEFAULT_AGENT_PASSWORD = os.getenv("SEED_AGENT_PASSWORD") or DEMO_AGENT_PASSWORD
+
+
+def _check_seed_password() -> None:
+    """Interdit de semer des comptes avec le mot de passe de démonstration en production."""
+    if not settings.is_production:
+        return
+    if (
+        DEFAULT_AGENT_PASSWORD == DEMO_AGENT_PASSWORD
+        or len(DEFAULT_AGENT_PASSWORD) < MIN_SEED_PASSWORD_LENGTH
+    ):
+        raise RuntimeError(
+            "SEED_AGENT_PASSWORD doit être défini et faire au moins "
+            f"{MIN_SEED_PASSWORD_LENGTH} caractères pour semer une base de production."
+        )
 
 SERVICES: list[dict[str, str | None]] = [
     {"code": "DRH", "name": "Direction des Ressources Humaines", "floor": "2e étage"},
@@ -118,6 +138,7 @@ async def _seed_users(session: AsyncSession) -> None:
 
 async def seed(session: AsyncSession) -> None:
     """Insère les référentiels et les comptes de démonstration manquants."""
+    _check_seed_password()
     services = await _seed_services(session)
     await _seed_agents(session, services)
     await _seed_purposes(session)
