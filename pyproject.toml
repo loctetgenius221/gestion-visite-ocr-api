@@ -1,0 +1,84 @@
+[project]
+name = "sivg-backend"
+version = "0.1.0"
+description = "Backend API SIGV - OCR MRZ"
+readme = "README.md"
+authors = [
+    { name = "Moussa Sagna", email = "sagnamoussa546@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.5",
+    "asyncpg>=0.31.0",
+    "celery>=5.6.3",
+    "fastapi[standard]>=0.140.13",
+    "mrz>=0.6.2",
+    "opencv-python-headless>=5.0.0.93",
+    "paddleocr>=3.7.0",
+    "paddlepaddle>=3.3.1",
+    "passlib[bcrypt]>=1.7.4",
+    "pillow>=12.3.0",
+    "pillow-heif>=1.5.0",
+    "pydantic-settings>=2.14.2",
+    "python-jose[cryptography]>=3.5.0",
+    "python-multipart>=0.0.32",
+    "redis>=8.0.1",
+    "sqlalchemy[asyncio]>=2.0.51",
+]
+
+[build-system]
+requires = ["uv_build>=0.12.0,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    # `Depends(...)` / `Query(...)` en valeur par défaut est l'idiome FastAPI.
+    "B008",
+    # `Generic[T]` reste plus lisible que la syntaxe PEP 695 pour les schémas Pydantic.
+    "UP046",
+]
+
+[tool.coverage.run]
+source = ["app"]
+# SQLAlchemy async exécute l'ORM dans des greenlets : sans ce réglage, tout le code
+# appelé sous `await session.execute(...)` est compté comme non couvert.
+concurrency = ["greenlet", "thread"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "\\.\\.\\.",
+]
+
+[tool.mypy]
+python_version = "3.12"
+plugins = []
+ignore_missing_imports = true
+
+[tool.uv.build-backend]
+module-name = "app"
+module-root = ""
+
+[dependency-groups]
+dev = [
+    "aiosqlite>=0.22.1",
+    "httpx>=0.28.1",
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.0",
+]

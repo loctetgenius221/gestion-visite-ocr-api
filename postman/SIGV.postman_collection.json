@@ -1,0 +1,917 @@
+{
+  "info": {
+    "name": "SIGV — Backend API",
+    "description": "Collection de test du backend SIGV (contrôle d'accès, scan MRZ).\n\n## Démarrage rapide\n\n1. Importez aussi `SIGV.postman_environment.json` et sélectionnez l'environnement **SIGV — Local**.\n2. Lancez **Auth / Login** : les tokens sont enregistrés automatiquement dans l'environnement, toutes les autres requêtes s'authentifient seules.\n3. Pour **OCR / Scan MRZ**, ouvrez l'onglet *Body* et sélectionnez votre photo dans le champ `mrz_image` (Postman ne peut pas mémoriser un chemin de fichier à l'import).\n\nLes requêtes enchaînent leurs variables : un scan alimente `visitor_*`, un service alimente `service_id`, etc. Vous pouvez donc lancer la collection entière avec le Collection Runner.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{access_token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "// Garde-fou : rappelle de lancer Login si aucun token n'est en mémoire.",
+          "const publiques = ['/auth/login', '/auth/refresh', '/auth/forgot-password', '/health'];",
+          "const url = pm.request.url.getPath();",
+          "if (!publiques.some(p => url.endsWith(p)) && !pm.environment.get('access_token')) {",
+          "  console.warn('Aucun access_token : lancez d\\'abord la requête Auth / Login.');",
+          "}"
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.environment.set('access_token', b.access_token);",
+                  "pm.environment.set('refresh_token', b.refresh_token);",
+                  "pm.test('tokens reçus', () => {",
+                  "  pm.expect(b.access_token).to.be.a('string');",
+                  "  pm.expect(b.user.identifiant).to.eql(pm.environment.get('identifiant'));",
+                  "});",
+                  "pm.test('aucun hash de mot de passe exposé', () => {",
+                  "  pm.expect(JSON.stringify(b)).to.not.include('mot_de_passe_hash');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifiant\": \"{{identifiant}}\",\n  \"mot_de_passe\": \"{{mot_de_passe}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Enregistre `access_token` et `refresh_token` dans l'environnement."
+          }
+        },
+        {
+          "name": "Me",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('profil de l\\'agent connecté', () => {",
+                  "  pm.expect(pm.response.json().identifiant).to.eql(pm.environment.get('identifiant'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Refresh",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.environment.set('access_token', pm.response.json().access_token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/refresh",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "refresh"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Forgot password",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifiant\": \"{{identifiant}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/forgot-password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "forgot-password"
+              ]
+            },
+            "description": "Répond toujours 202, sans révéler si le compte existe (stub, voir ADR-006)."
+          }
+        },
+        {
+          "name": "Logout",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "// Le refresh token est révoqué : le rejouer doit désormais échouer en 401.",
+                  "pm.environment.unset('access_token');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refresh_token\": \"{{refresh_token}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "À lancer en dernier : révoque le refresh token et vide le token courant."
+          }
+        }
+      ]
+    },
+    {
+      "name": "OCR MRZ",
+      "item": [
+        {
+          "name": "Scan MRZ (upload photo)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "",
+                  "pm.test('checksums ICAO valides', () => pm.expect(b.mrz_valid).to.be.true);",
+                  "pm.test('identité extraite', () => {",
+                  "  pm.expect(b.fields.nom).to.be.a('string').and.not.empty;",
+                  "  pm.expect(b.fields.numero_document).to.be.a('string').and.not.empty;",
+                  "});",
+                  "pm.test('NIN extrait automatiquement (CNI sénégalaise)', () => {",
+                  "  if (b.document_type === 'CNI') {",
+                  "    pm.expect(b.fields.nin, 'NIN absent — vérifier la lisibilité du verso').to.be.a('string');",
+                  "  }",
+                  "});",
+                  "console.log('Latence serveur (ms) :', b.processing_time_ms);",
+                  "",
+                  "// Alimente la création de visite qui suit.",
+                  "const f = b.fields;",
+                  "pm.environment.set('visitor_nom', f.nom);",
+                  "pm.environment.set('visitor_prenom', f.prenom);",
+                  "pm.environment.set('visitor_numero_document', f.numero_document);",
+                  "pm.environment.set('visitor_nin', f.nin || '');",
+                  "pm.environment.set('visitor_nationalite', f.nationalite || '');",
+                  "pm.environment.set('visitor_date_naissance', f.date_naissance || '');",
+                  "pm.environment.set('visitor_sexe', f.sexe || '');",
+                  "pm.environment.set('visitor_date_expiration', f.date_expiration || '');",
+                  "pm.environment.set('type_document', b.document_type);",
+                  "pm.environment.set('mrz_image_url', b.mrz_image_url || '');"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "mrz_image",
+                  "type": "file",
+                  "src": [],
+                  "description": "Face du document portant le MRZ (verso de CNI). jpg, jpeg, png ou heic, 10 Mo max."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/ocr/scan",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ocr",
+                "scan"
+              ]
+            },
+            "description": "⚠️ Sélectionnez le fichier dans l'onglet **Body → form-data**, ligne `mrz_image` (type *File*). Postman ne conserve pas les chemins de fichiers à l'import.\n\nComptez ~6 s de réponse sur CPU : l'inférence OCR domine (voir ADR-013)."
+          }
+        },
+        {
+          "name": "Voir l'image conservée",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}{{mrz_image_url}}",
+              "host": [
+                "{{base_url}}{{mrz_image_url}}"
+              ]
+            },
+            "description": "Sert l'image archivée pour audit. Disponible hors production uniquement."
+          }
+        },
+        {
+          "name": "Erreur — fichier non supporté (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 avec le format d\\'erreur standard', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b).to.have.all.keys('error_code', 'message', 'details');",
+                  "  pm.expect(b.error_code).to.eql('UNSUPPORTED_IMAGE');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "mrz_image",
+                  "type": "file",
+                  "src": [],
+                  "description": "Sélectionnez volontairement un PDF ou un .txt."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/ocr/scan",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "ocr",
+                "scan"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Fichiers",
+      "item": [
+        {
+          "name": "Déposer la signature",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const url = pm.response.json().url;",
+                  "pm.environment.set('signature_url', url);",
+                  "pm.test('URL de signature retournée', () => {",
+                  "  pm.expect(url).to.include('/signatures/');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "signature",
+                  "type": "file",
+                  "src": [],
+                  "description": "Signature manuscrite capturée sur le pad tactile (PNG de préférence)."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/signature",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "signature"
+              ]
+            },
+            "description": "À appeler **avant** la création de visite : l'`url` retournée alimente le champ `signature_url` de `POST /visits`.\n\nSélectionnez une image dans *Body → form-data*."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Référentiels",
+      "item": [
+        {
+          "name": "Services",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const services = pm.response.json();",
+                  "pm.test('au moins un service (seed chargé ?)', () => pm.expect(services).to.not.be.empty);",
+                  "if (services.length) pm.environment.set('service_id', services[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/services",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services"
+              ]
+            },
+            "description": "Retourne l'arborescence : les sous-services sont imbriqués dans `children`."
+          }
+        },
+        {
+          "name": "Agents d'un service",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const agents = pm.response.json();",
+                  "if (agents.length) pm.environment.set('agent_id', agents[0].id);",
+                  "pm.test('agents rattachés au service', () => pm.expect(agents).to.not.be.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/{{service_id}}/agents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "{{service_id}}",
+                "agents"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Agents (filtrable)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents?service_id={{service_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents"
+              ],
+              "query": [
+                {
+                  "key": "service_id",
+                  "value": "{{service_id}}"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Motifs de visite",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const p = pm.response.json();",
+                  "if (p.length) pm.environment.set('purpose_id', p[0].id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/purposes",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "purposes"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Visites",
+      "item": [
+        {
+          "name": "Créer une visite (depuis le scan)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const v = pm.response.json();",
+                  "pm.environment.set('visit_id', v.id);",
+                  "pm.test('visite ouverte', () => pm.expect(v.statut).to.eql('PRESENT'));",
+                  "pm.test('identité et NIN persistés', () => {",
+                  "  pm.expect(v.visitor.numero_document).to.eql(pm.environment.get('visitor_numero_document'));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor\": {\n    \"prenom\": \"{{visitor_prenom}}\",\n    \"nom\": \"{{visitor_nom}}\",\n    \"type_document\": \"{{type_document}}\",\n    \"numero_document\": \"{{visitor_numero_document}}\",\n    \"nin\": \"{{visitor_nin}}\",\n    \"nationalite\": \"{{visitor_nationalite}}\",\n    \"date_naissance\": \"{{visitor_date_naissance}}\",\n    \"sexe\": \"{{visitor_sexe}}\",\n    \"date_expiration_document\": \"{{visitor_date_expiration}}\",\n    \"telephone\": \"+221770000000\",\n    \"provenance\": \"Entreprise ACME\",\n    \"mrz_image_url\": \"{{mrz_image_url}}\"\n  },\n  \"service_id\": \"{{service_id}}\",\n  \"agent_id\": \"{{agent_id}}\",\n  \"purpose_id\": \"{{purpose_id}}\",\n  \"badge_number\": \"B-042\",\n  \"signature_url\": \"{{signature_url}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits"
+              ]
+            },
+            "description": "Reprend les variables alimentées par **OCR / Scan MRZ** et les référentiels.\n\nUn motif est obligatoire : `purpose_id` **ou** `motif_libre`."
+          }
+        },
+        {
+          "name": "Lister (paginé + filtres)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('réponse enveloppée', () => {",
+                  "  pm.expect(pm.response.json()).to.have.all.keys('items', 'total', 'page', 'page_size');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits?page=1&page_size=20&statut=PRESENT&sort=desc",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                },
+                {
+                  "key": "statut",
+                  "value": "PRESENT",
+                  "description": "PRESENT | SORTI"
+                },
+                {
+                  "key": "sort",
+                  "value": "desc",
+                  "description": "asc | desc sur checked_in_at"
+                },
+                {
+                  "key": "search",
+                  "value": "coly",
+                  "disabled": true,
+                  "description": "nom, prénom ou n° de document"
+                },
+                {
+                  "key": "date_from",
+                  "value": "2026-08-01T00:00:00Z",
+                  "disabled": true
+                },
+                {
+                  "key": "date_to",
+                  "value": "2026-12-31T23:59:59Z",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Activez `search` / `date_from` / `date_to` pour tester les filtres.\n\n⚠️ Les dates doivent être encodées : utilisez le format `...Z` plutôt que `+00:00`."
+          }
+        },
+        {
+          "name": "Détail d'une visite",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/{{visit_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "{{visit_id}}"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Checkout (sortie)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const v = pm.response.json();",
+                  "pm.test('visite clôturée', () => {",
+                  "  pm.expect(v.statut).to.eql('SORTI');",
+                  "  pm.expect(v.checked_out_at).to.not.be.null;",
+                  "  pm.expect(v.checked_out_user).to.not.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/{{visit_id}}/checkout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "{{visit_id}}",
+                "checkout"
+              ]
+            },
+            "description": "Rejouer cette requête doit renvoyer 409 `VISIT_ALREADY_CLOSED`."
+          }
+        },
+        {
+          "name": "Synchronisation hors-ligne (batch)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('statut individuel par visite', () => {",
+                  "  pm.expect(b.results).to.have.lengthOf(b.total);",
+                  "});",
+                  "console.log('créées', b.created, '| conflits', b.conflicts, '| erreurs', b.errors);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visits\": [\n    {\n      \"visitor\": {\n        \"prenom\": \"Awa\",\n        \"nom\": \"Ndiaye\",\n        \"type_document\": \"CNI\",\n        \"numero_document\": \"10120010718000254\"\n      },\n      \"service_id\": \"{{service_id}}\",\n      \"agent_id\": \"{{agent_id}}\",\n      \"purpose_id\": \"{{purpose_id}}\",\n      \"client_reference\": \"offline-001\",\n      \"checked_in_at\": \"2026-08-05T09:15:00Z\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/sync",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "sync"
+              ]
+            },
+            "description": "Rejouez cette requête telle quelle : `client_reference` garantit l'idempotence, le second envoi doit remonter `conflict` sans créer de doublon."
+          }
+        },
+        {
+          "name": "Erreur — visite introuvable (404)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 au format standard', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b).to.have.all.keys('error_code', 'message', 'details');",
+                  "  pm.expect(b.error_code).to.eql('VISIT_NOT_FOUND');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/00000000-0000-0000-0000-000000000000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "00000000-0000-0000-0000-000000000000"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Dashboard",
+      "item": [
+        {
+          "name": "Statistiques",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('compteurs présents', () => {",
+                  "  pm.expect(b).to.include.keys('visites_du_jour', 'presents_actuellement', 'sorties_du_jour');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/dashboard/stats",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dashboard",
+                "stats"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Erreur — non authentifié (401)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('401 au format standard', () => {",
+                  "  pm.response.to.have.status(401);",
+                  "  pm.expect(pm.response.json()).to.have.all.keys('error_code', 'message', 'details');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

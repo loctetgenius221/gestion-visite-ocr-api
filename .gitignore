@@ -1,0 +1,33 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Secrets — seul .env.example est versionné
+.env
+.env.*
+!.env.example
+
+# Fichiers uploadés (images MRZ, signatures) : données personnelles, jamais versionnées
+storage/
+
+# Tests et outillage
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# Bases locales
+*.db
+*.sqlite3
+
+# Modèles PaddleOCR téléchargés
+.paddleocr/
