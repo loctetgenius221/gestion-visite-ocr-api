@@ -25,8 +25,9 @@ class Visitor(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # le numéro pour permettre la recherche et la déduplication lors des synchros offline.
     numero_document: Mapped[str] = mapped_column(String(60), nullable=False, index=True)
     # Numéro d'Identification National : imprimé au verso de la CNI sénégalaise mais
-    # **absent du MRZ** (vérifié sur une carte réelle, voir ADR-005). Il ne peut donc
-    # pas être extrait par l'OCR et reste à la saisie manuelle de l'agent.
+    # **absent du MRZ** (vérifié sur une carte réelle, voir ADR-005). Il est extrait
+    # de la ligne imprimée juste au-dessus de la bande MRZ, dans la même passe OCR
+    # (ADR-014) : aucune saisie manuelle n'est requise.
     nin: Mapped[str | None] = mapped_column(String(30), nullable=True, index=True)
     nationalite: Mapped[str | None] = mapped_column(String(60), nullable=True)
     date_naissance: Mapped[date | None] = mapped_column(Date, nullable=True)

@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.enums import DocumentType, VisitStatus
+from app.models.referentiel import Agent, Purpose, Service
 from app.models.visit import Visit
 from app.models.visitor import Visitor
 from app.schemas.visit import VisitFilters
@@ -71,6 +73,16 @@ class VisitRepository:
             stmt = stmt.where(Visit.checked_in_at >= filters.date_from)
         if filters.date_to is not None:
             stmt = stmt.where(Visit.checked_in_at <= filters.date_to)
+        # Filtres du dashboard web. L'app mobile ne les envoie pas : à `None`, ils
+        # n'ajoutent aucune clause et la requête reste celle d'avant.
+        if filters.service_id is not None:
+            stmt = stmt.where(Visit.service_id == filters.service_id)
+        if filters.agent_id is not None:
+            stmt = stmt.where(Visit.agent_id == filters.agent_id)
+        if filters.purpose_id is not None:
+            stmt = stmt.where(Visit.purpose_id == filters.purpose_id)
+        if filters.created_by is not None:
+            stmt = stmt.where(Visit.checked_in_by == filters.created_by)
         if filters.search:
             pattern = f"%{filters.search.strip().lower()}%"
             stmt = stmt.join(Visitor, Visit.visitor_id == Visitor.id).where(
@@ -94,11 +106,28 @@ class VisitRepository:
         stmt = stmt.order_by(order, Visit.id).limit(limit).offset(offset)
         return list((await self.session.execute(stmt)).unique().scalars().all())
 
+    async def list_for_export(self, filters: VisitFilters, *, limit: int) -> list[Visit]:
+        """Lignes d'un export, ordonnées chronologiquement.
+
+        Bornée par `limit` : un export sans plafond sur plusieurs années de
+        registre chargerait tout en mémoire. Le service refuse au-delà plutôt que
+        de tronquer silencieusement — un export incomplet mais silencieux serait
+        pire qu'une erreur.
+        """
+        stmt = self._apply_filters(select(Visit), filters)
+        stmt = stmt.order_by(Visit.checked_in_at.asc(), Visit.id).limit(limit)
+        return list((await self.session.execute(stmt)).unique().scalars().all())
+
     # --- Statistiques dashboard ---
+    #
+    # Les visites annulées sont exclues de tous les agrégats : une visite annulée
+    # est une erreur de saisie, la compter fausserait les chiffres.
 
     async def count_checked_in_between(self, start: datetime, end: datetime) -> int:
         stmt = select(func.count(Visit.id)).where(
-            Visit.checked_in_at >= start, Visit.checked_in_at < end
+            Visit.checked_in_at >= start,
+            Visit.checked_in_at < end,
+            Visit.statut != VisitStatus.ANNULEE,
         )
         return (await self.session.execute(stmt)).scalar_one()
 
@@ -107,6 +136,7 @@ class VisitRepository:
             Visit.checked_out_at.is_not(None),
             Visit.checked_out_at >= start,
             Visit.checked_out_at < end,
+            Visit.statut != VisitStatus.ANNULEE,
         )
         return (await self.session.execute(stmt)).scalar_one()
 
@@ -124,6 +154,95 @@ class VisitRepository:
             Visit.checked_out_at.is_not(None),
             Visit.checked_out_at >= start,
             Visit.checked_out_at < end,
+            Visit.statut != VisitStatus.ANNULEE,
         )
         rows = (await self.session.execute(stmt)).all()
         return [(out - inn).total_seconds() for inn, out in rows if out is not None]
+
+    # --- Analytics du dashboard web ---
+
+    async def checkin_checkout_timestamps(
+        self, start: datetime, end: datetime
+    ) -> list[tuple[datetime, datetime | None]]:
+        """Horodatages bruts de la période, pour les agrégats calculés en Python.
+
+        Le découpage en tranches (jour/semaine/mois) et l'extraction de l'heure
+        s'écrivent différemment en PostgreSQL (`date_trunc`, `EXTRACT`) et en
+        SQLite (`strftime`). Plutôt que de maintenir deux dialectes — et de tester
+        sur l'un en exécutant l'autre en production — on rapatrie les horodatages
+        et on agrège en Python. Le volume s'y prête : un poste d'accueil produit
+        quelques milliers de visites par an.
+        """
+        stmt = select(Visit.checked_in_at, Visit.checked_out_at).where(
+            Visit.checked_in_at >= start,
+            Visit.checked_in_at < end,
+            Visit.statut != VisitStatus.ANNULEE,
+        )
+        return [(inn, out) for inn, out in (await self.session.execute(stmt)).all()]
+
+    async def checkout_timestamps(self, start: datetime, end: datetime) -> list[datetime]:
+        """Sorties de la période, pour la seconde série du graphe temporel."""
+        stmt = select(Visit.checked_out_at).where(
+            Visit.checked_out_at.is_not(None),
+            Visit.checked_out_at >= start,
+            Visit.checked_out_at < end,
+            Visit.statut != VisitStatus.ANNULEE,
+        )
+        return [row for row in (await self.session.execute(stmt)).scalars().all() if row]
+
+    async def count_by_service(self, start: datetime, end: datetime) -> list[tuple[Any, str, int]]:
+        """`(service_id, nom, nombre)` sur la période, du plus fréquenté au moins."""
+        stmt = (
+            select(Service.id, Service.name, func.count(Visit.id))
+            .join(Service, Visit.service_id == Service.id)
+            .where(
+                Visit.checked_in_at >= start,
+                Visit.checked_in_at < end,
+                Visit.statut != VisitStatus.ANNULEE,
+            )
+            .group_by(Service.id, Service.name)
+            .order_by(func.count(Visit.id).desc(), Service.name)
+        )
+        return [(sid, name, total) for sid, name, total in (await self.session.execute(stmt)).all()]
+
+    async def count_by_purpose(self, start: datetime, end: datetime) -> list[tuple[Any, str, int]]:
+        """`(purpose_id, libellé, nombre)`.
+
+        `outerjoin` : `purpose_id` est nullable — l'agent peut saisir un motif
+        libre. Ces visites sont regroupées sous un libellé « non renseigné »
+        plutôt que disparaître du camembert.
+        """
+        stmt = (
+            select(Purpose.id, Purpose.libelle, func.count(Visit.id))
+            .outerjoin(Purpose, Visit.purpose_id == Purpose.id)
+            .where(
+                Visit.checked_in_at >= start,
+                Visit.checked_in_at < end,
+                Visit.statut != VisitStatus.ANNULEE,
+            )
+            .group_by(Purpose.id, Purpose.libelle)
+            .order_by(func.count(Visit.id).desc())
+        )
+        return [(pid, lib, total) for pid, lib, total in (await self.session.execute(stmt)).all()]
+
+    async def top_agents(
+        self, start: datetime, end: datetime, *, limit: int
+    ) -> list[tuple[Any, str, str | None, int]]:
+        """`(agent_id, nom, service, nombre)` des personnes les plus visitées."""
+        stmt = (
+            select(Agent.id, Agent.name, Service.name, func.count(Visit.id))
+            .join(Agent, Visit.agent_id == Agent.id)
+            .outerjoin(Service, Agent.service_id == Service.id)
+            .where(
+                Visit.checked_in_at >= start,
+                Visit.checked_in_at < end,
+                Visit.statut != VisitStatus.ANNULEE,
+            )
+            .group_by(Agent.id, Agent.name, Service.name)
+            .order_by(func.count(Visit.id).desc(), Agent.name)
+            .limit(limit)
+        )
+        return [
+            (aid, name, service, total)
+            for aid, name, service, total in (await self.session.execute(stmt)).all()
+        ]

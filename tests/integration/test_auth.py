@@ -97,7 +97,18 @@ class TestLoginOAuth2:
         )
 
         assert json_reponse.status_code == form_reponse.status_code == 200
-        assert json_reponse.json()["user"] == form_reponse.json()["user"]
+
+        # `updated_at` est volontairement écarté de la comparaison : une connexion
+        # réussie horodate `last_login_at` et remet le compteur d'échecs à zéro,
+        # donc touche la ligne. Deux connexions successives ne peuvent plus porter
+        # le même `updated_at` — ce qui est le comportement voulu, pas un écart
+        # entre les deux points d'entrée.
+        def sans_horodatage(payload: dict) -> dict:
+            return {k: v for k, v in payload.items() if k != "updated_at"}
+
+        assert sans_horodatage(json_reponse.json()["user"]) == sans_horodatage(
+            form_reponse.json()["user"]
+        )
 
 
 class TestMe:

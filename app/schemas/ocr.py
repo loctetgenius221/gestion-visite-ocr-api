@@ -13,8 +13,9 @@ class MrzFields(BaseModel):
     nom: str
     prenom: str
     numero_document: str
-    # Pour une CNI sénégalaise le NIN est encodé dans la zone `optional_data` du TD1 ;
-    # à défaut on retombe sur `numero_document`. Voir ADR-005.
+    # Le NIN n'est **pas** dans le MRZ : la zone `optional_data` du TD1 porte la fin
+    # du numéro de carte (convention de débordement ICAO). Il est lu sur la ligne
+    # imprimée au-dessus de la bande MRZ, dans la même passe OCR. Voir ADR-005/014.
     nin: str | None = None
     nationalite: str | None = None
     date_naissance: date | None = None

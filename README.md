@@ -6,6 +6,7 @@ zone MRZ (ICAO 9303) de leur pièce d'identité.
 
 Spécification fonctionnelle : [`SPEC_BACKEND_SIGV_OCR_MRZ.md`](SPEC_BACKEND_SIGV_OCR_MRZ.md)
 Décisions techniques : [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md)
+Guide d'implémentation, de zéro à l'API : [`GUIDE_IMPLEMENTATION.md`](GUIDE_IMPLEMENTATION.md)
 Mise en production : [`DEPLOYMENT.md`](DEPLOYMENT.md)
 
 ---
@@ -47,10 +48,11 @@ Sondes : <http://localhost:8000/health> (processus) · <http://localhost:8000/he
 Créés par `python -m app.seeds`, mot de passe réglé par `SEED_AGENT_PASSWORD`
 (défaut `Sigv@2026`) :
 
-| Identifiant | Rôle |
-|---|---|
-| `agent001` | `AGENT_CONTROLE` |
-| `superviseur001` | `SUPERVISEUR` |
+| Identifiant | Rôle | Usage |
+|---|---|---|
+| `agent001` | `AGENT_CONTROLE` | app mobile |
+| `superviseur001` | `SUPERVISEUR` | app mobile — aucun droit d'administration |
+| `admin001` | `ADMIN` | dashboard web, accès global à l'API |
 
 ---
 
@@ -76,6 +78,16 @@ présence du NIN, pagination).
 > Ordre conseillé : `Login` → `Services` → `Agents d'un service` → `Motifs` →
 > `Scan MRZ` → `Créer une visite` → `Lister` → `Checkout`. Gardez `Logout` pour la
 > fin : il révoque le refresh token.
+
+Les six dossiers **Administration — …** couvrent le dashboard web. Ils utilisent
+`admin_access_token`, renseigné par **Auth → Login administrateur** : les deux
+sessions coexistent dans l'environnement, ce qui permet de vérifier les refus
+`403` d'un agent de contrôle sur une route d'administration.
+
+> Pour rejouer la collection entière une seconde fois, changez
+> `nouvel_identifiant`, `nouveau_code_service` et `nouveau_motif` : ces trois
+> valeurs sont uniques en base, et les requêtes de création répondraient sinon
+> `409` à juste titre.
 
 ### Points d'attention
 
@@ -197,6 +209,40 @@ Toutes les routes sont préfixées par `/api/v1` et exigent un bearer token, sau
 | Visites | `POST /visits` · `GET /visits` · `GET /visits/{id}` · `PUT /visits/{id}/checkout` · `POST /visits/sync` |
 | Référentiels | `GET /services` · `GET /services/{id}/agents` · `GET /agents` · `GET /purposes` |
 | Dashboard | `GET /dashboard/stats` |
+
+### Routes d'administration (rôle `ADMIN`)
+
+Ajoutées pour le dashboard web. Elles répondent `403 FORBIDDEN` à tout autre
+rôle — le contrôle est fait **côté serveur**, en relisant le rôle en base à
+chaque requête et jamais depuis la revendication `role` du JWT.
+
+| Domaine | Route |
+|---|---|
+| Comptes | `GET/POST /users` · `GET/PUT /users/{id}` · `PATCH /users/{id}/status` · `POST /users/{id}/reset-password` · `POST /users/{id}/unlock` · `GET /users/{id}/sessions` · `DELETE /users/{id}/sessions/{sessionId}` |
+| Référentiels | `POST /services` · `PUT /services/{id}` · `PATCH /services/{id}/status` *(idem `agents`, `purposes`)* |
+| Visites | `PATCH /visits/{id}` · `POST /visits/{id}/cancel` · `GET /visits/export?format=csv` |
+| Statistiques | `GET /dashboard/stats/timeseries` · `/by-service` · `/by-purpose` · `/peak-hours` · `/avg-duration` · `/top-agents` |
+| Audit | `GET /audit-logs` · `GET /audit-logs/actions` |
+| Paramètres | `GET/PUT /settings` |
+
+Quatre principes gouvernent ces routes :
+
+- **Aucune suppression physique.** Comptes, services, agents, motifs et visites
+  sont référencés par le registre : on désactive, on archive, on annule.
+  `PATCH .../status` remplace `DELETE`.
+- **Tout est tracé.** Connexions, corrections, annulations, changements de
+  compte et de référentiel alimentent `audit_logs`, avec le diff avant/après.
+- **Rétro-compatibilité.** Aucune route existante ne change de contrat. Les
+  filtres `service_id`, `agent_id`, `purpose_id` et `created_by` s'*ajoutent* à
+  `GET /visits` ; les valeurs de `role` restent en majuscules.
+- **Verrouillage après échecs.** Cinq tentatives ratées bloquent un compte pour
+  quinze minutes. Seuil et durée sont réglables dans `/settings`, sans
+  redéploiement.
+
+> `GET /visits/export?format=pdf` répond `501 EXPORT_FORMAT_UNAVAILABLE` : la
+> route et ses filtres sont en place, le rendu PDF demandera une bibliothèque
+> dédiée. Le CSV, lui, est complet (UTF-8 avec BOM, séparateur `;`, prêt pour
+> Excel en configuration francophone).
 
 ### Scan MRZ
 

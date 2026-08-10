@@ -91,6 +91,14 @@ USERS: list[dict[str, object]] = [
         "poste": "Poste principal",
         "role": UserRole.SUPERVISEUR,
     },
+    {
+        # Compte du dashboard web. Seul rôle habilité sur les routes
+        # d'administration : comptes, référentiels en écriture, audit, paramètres.
+        "nom": "Administrateur SIGV",
+        "identifiant": "admin001",
+        "poste": "Administration",
+        "role": UserRole.ADMIN,
+    },
 ]
 
 

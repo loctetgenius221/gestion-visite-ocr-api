@@ -66,6 +66,15 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
     )
 
+    # --- Annulation logique (administrateur) ---
+    # Une visite erronée n'est jamais supprimée : le registre doit rester complet
+    # et vérifiable. Elle passe en `ANNULEE`, motif obligatoire.
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancelled_by: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=True
+    )
+    cancellation_reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+
     # Clé d'idempotence fournie par le client mobile en mode hors-ligne : permet à
     # `POST /visits/sync` de rejouer un batch sans créer de doublon (voir ADR-004).
     client_reference: Mapped[str | None] = mapped_column(
@@ -81,6 +90,9 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     checked_out_user: Mapped[User | None] = relationship(
         "User", foreign_keys=[checked_out_by], lazy="joined"
+    )
+    cancelled_user: Mapped[User | None] = relationship(
+        "User", foreign_keys=[cancelled_by], lazy="joined"
     )
 
     def __repr__(self) -> str:  # pragma: no cover - aide au debug uniquement

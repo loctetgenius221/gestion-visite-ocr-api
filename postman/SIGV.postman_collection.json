@@ -94,6 +94,55 @@
           }
         },
         {
+          "name": "Login administrateur",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.environment.set('admin_access_token', b.access_token);",
+                  "pm.test('le role ADMIN est expose', () => pm.expect(b.user.role).to.eql('ADMIN'));",
+                  "pm.test('aucun hash de mot de passe expose', () => {",
+                  "  pm.expect(JSON.stringify(b)).to.not.include('mot_de_passe_hash');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"identifiant\": \"{{admin_identifiant}}\",\n  \"mot_de_passe\": \"{{admin_mot_de_passe}}\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/auth/login",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Connexion du compte admin de seed. Enregistre `admin_access_token`, utilisé par tous les dossiers « Administration — … ». Le token de l'agent de contrôle reste dans `access_token` : les deux coexistent, ce qui permet de vérifier les refus 403."
+          }
+        },
+        {
           "name": "Me",
           "event": [
             {
@@ -910,6 +959,2052 @@
               ]
             }
           }
+        }
+      ]
+    },
+    {
+      "name": "Administration — Comptes",
+      "description": "Gestion des comptes, réservée au rôle ADMIN. Aucune suppression n'est exposée : un compte ayant enregistré des visites est référencé en `ON DELETE RESTRICT`, seule la désactivation est possible.",
+      "item": [
+        {
+          "name": "Créer un compte (mot de passe généré)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": "Sans `mot_de_passe`, le serveur en génère un et le renvoie **une seule fois**. Il n'est ni stocké en clair ni journalisé.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"Agent Postman\",\n  \"identifiant\": \"{{nouvel_identifiant}}\",\n  \"role\": \"AGENT_CONTROLE\",\n  \"poste\": \"Poste secondaire\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.environment.set('user_id', b.user.id);",
+                  "pm.environment.set('nouveau_mot_de_passe', b.mot_de_passe);",
+                  "pm.test('mot de passe genere et suffisamment long', () => {",
+                  "  pm.expect(b.mot_de_passe).to.be.a('string');",
+                  "  pm.expect(b.mot_de_passe.length).to.be.at.least(12);",
+                  "});",
+                  "pm.test('statut actif a la creation', () => pm.expect(b.user.status).to.eql('active'));",
+                  "pm.test('aucun hash expose', () => {",
+                  "  pm.expect(JSON.stringify(b)).to.not.include('mot_de_passe_hash');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lister les comptes (paginé + filtres)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users?page=1&page_size=20&role=AGENT_CONTROLE&status=active",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                },
+                {
+                  "key": "role",
+                  "value": "AGENT_CONTROLE"
+                },
+                {
+                  "key": "status",
+                  "value": "active"
+                }
+              ]
+            },
+            "description": "Même enveloppe de pagination que `/visits` : `{items, total, page, page_size}`.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('enveloppe de pagination standard', () => {",
+                  "  pm.expect(b).to.have.all.keys('items', 'total', 'page', 'page_size');",
+                  "});",
+                  "pm.test('le filtre par role est applique', () => {",
+                  "  b.items.forEach(u => pm.expect(u.role).to.eql('AGENT_CONTROLE'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Détail d'un compte",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}"
+              ]
+            },
+            "description": "Expose l'état de verrouillage et la dernière connexion.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('champs d administration presents', () => {",
+                  "  pm.expect(b).to.have.property('failed_login_attempts');",
+                  "  pm.expect(b).to.have.property('locked_until');",
+                  "  pm.expect(b).to.have.property('status');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Modifier nom / poste / rôle",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}"
+              ]
+            },
+            "description": "L'identifiant n'est pas modifiable : il rattache les visites déjà enregistrées à leur auteur.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"Agent Postman (modifié)\",\n  \"poste\": \"Accueil principal\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('nom mis a jour', () => {",
+                  "  pm.expect(pm.response.json().nom).to.eql('Agent Postman (modifié)');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Réinitialiser le mot de passe",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}/reset-password",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}",
+                "reset-password"
+              ]
+            },
+            "description": "Réinitialisation forcée par l'administrateur. Coupe aussi toutes les sessions du compte : un mot de passe réinitialisé l'est souvent parce qu'il a fuité.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.environment.set('nouveau_mot_de_passe', b.mot_de_passe);",
+                  "pm.test('nouveau mot de passe renvoye une fois', () => {",
+                  "  pm.expect(b.mot_de_passe).to.be.a('string');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Débloquer un compte verrouillé",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}/unlock",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}",
+                "unlock"
+              ]
+            },
+            "description": "Remet à zéro le compteur d'échecs et lève le verrouillage avant son terme. Le seuil et la durée sont dans `/settings`.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('compteur remis a zero', () => {",
+                  "  pm.expect(b.failed_login_attempts).to.eql(0);",
+                  "  pm.expect(b.locked_until).to.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Sessions actives du compte",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}/sessions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}",
+                "sessions"
+              ]
+            },
+            "description": "Refresh tokens émis, ni révoqués ni expirés. Seul le `jti` est stocké, jamais le token lui-même.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "if (b.length) { pm.environment.set('session_id', b[0].id); }",
+                  "pm.test('le token n est jamais renvoye', () => {",
+                  "  pm.expect(JSON.stringify(b)).to.not.include('refresh_token');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Révoquer une session (tablette perdue)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}/sessions/{{session_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}",
+                "sessions",
+                "{{session_id}}"
+              ]
+            },
+            "description": "Coupe l'accès d'un appareil. Sans session ouverte sur ce compte, la réponse est 404 — lancez d'abord une connexion avec lui.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 ou 404 si aucune session', () => {",
+                  "  pm.expect(pm.response.code).to.be.oneOf([204, 404]);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Désactiver un compte",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users/{{user_id}}/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users",
+                "{{user_id}}",
+                "status"
+              ]
+            },
+            "description": "Révoque immédiatement toutes les sessions ouvertes. Refusé sur son propre compte et sur le dernier administrateur actif.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"inactive\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('compte desactive', () => {",
+                  "  pm.expect(b.status).to.eql('inactive');",
+                  "  pm.expect(b.is_active).to.eql(false);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erreur — un agent de contrôle est refusé (403)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": "Le rôle est vérifié côté serveur, relu en base à chaque requête — jamais depuis la revendication `role` du JWT.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('403', () => pm.response.to.have.status(403));",
+                  "pm.test('format d erreur standard', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b.error_code).to.eql('FORBIDDEN');",
+                  "  pm.expect(b).to.have.all.keys('error_code', 'message', 'details');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Administration — Référentiels",
+      "description": "Écriture sur les services, agents et motifs. Aucun `DELETE` : les visites les référencent, seul l'archivage logique est possible.",
+      "item": [
+        {
+          "name": "Créer un service",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/services",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services"
+              ]
+            },
+            "description": "Le `code` est unique, comparé sans tenir compte de la casse.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Direction du Budget\",\n  \"code\": \"{{nouveau_code_service}}\",\n  \"floor\": \"5e étage\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "const b = pm.response.json();",
+                  "pm.environment.set('admin_service_id', b.id);",
+                  "pm.test('cree actif', () => pm.expect(b.status).to.eql('active'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Modifier un service",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/{{admin_service_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "{{admin_service_id}}"
+              ]
+            },
+            "description": "Un rattachement créant un cycle dans la hiérarchie est refusé (409).",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Direction du Budget et des Finances\",\n  \"floor\": \"6e étage\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Créer un agent",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents"
+              ]
+            },
+            "description": "Rattacher un agent à un service archivé est refusé (409).",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Fatou Ndiaye\",\n  \"service_id\": \"{{admin_service_id}}\",\n  \"role\": \"Chef de service\",\n  \"office\": \"B601\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('admin_agent_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Modifier un agent",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents/{{admin_agent_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "{{admin_agent_id}}"
+              ]
+            },
+            "description": "Modification partielle : seuls les champs fournis sont écrasés.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"office\": \"B602\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Archiver un agent",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents/{{admin_agent_id}}/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "{{admin_agent_id}}",
+                "status"
+              ]
+            },
+            "description": "L'agent disparaît des listes servies à l'app mobile, sans être supprimé.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"archived\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('archive et horodate', () => {",
+                  "  pm.expect(b.status).to.eql('archived');",
+                  "  pm.expect(b.archived_at).to.not.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Archiver un service",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/{{admin_service_id}}/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "{{admin_service_id}}",
+                "status"
+              ]
+            },
+            "description": "Refusé (409) tant que le service porte des agents ou des sous-services actifs : archivez-les d'abord.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"archived\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Lister les référentiels archivés",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/services?include_archived=true",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services"
+              ],
+              "query": [
+                {
+                  "key": "include_archived",
+                  "value": "true"
+                }
+              ]
+            },
+            "description": "Rien n'a été supprimé : le dashboard retrouve l'archivé en le demandant explicitement. L'app mobile, elle, ne voit que l'actif.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const ids = pm.response.json().map(s => s.id);",
+                  "pm.test('le service archive est toujours la', () => {",
+                  "  pm.expect(ids).to.include(pm.environment.get('admin_service_id'));",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Créer un motif de visite",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/purposes",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "purposes"
+              ]
+            },
+            "description": "Le libellé est unique, comparé sans tenir compte de la casse.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"libelle\": \"{{nouveau_motif}}\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('admin_purpose_id', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Modifier un motif",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/purposes/{{admin_purpose_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "purposes",
+                "{{admin_purpose_id}}"
+              ]
+            },
+            "description": "Renommage d'une entrée du référentiel.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"libelle\": \"{{nouveau_motif}} (révisé)\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Archiver un motif",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/purposes/{{admin_purpose_id}}/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "purposes",
+                "{{admin_purpose_id}}",
+                "status"
+              ]
+            },
+            "description": "Une visite créée ensuite sur ce motif est refusée en 409 `ARCHIVED_REFERENTIEL` — utile contre un cache client périmé.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"archived\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Administration — Visites",
+      "description": "Correction, annulation et export du registre. Aucune suppression : la visite reste en base avec son motif d'annulation.",
+      "item": [
+        {
+          "name": "Lister avec les filtres étendus",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits?service_id={{service_id}}&created_by={{created_by}}&page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits"
+              ],
+              "query": [
+                {
+                  "key": "service_id",
+                  "value": "{{service_id}}"
+                },
+                {
+                  "key": "created_by",
+                  "value": "{{created_by}}"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Quatre filtres s'ajoutent à ceux du mobile : `service_id`, `agent_id`, `purpose_id`, `created_by`. Les anciens filtres sont inchangés — l'app mobile n'est pas affectée.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('enveloppe de pagination standard', () => {",
+                  "  pm.expect(pm.response.json()).to.have.all.keys('items', 'total', 'page', 'page_size');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Corriger une visite (erreur de saisie)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/{{visit_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "{{visit_id}}"
+              ]
+            },
+            "description": "`reason` est obligatoire : il part au journal d'audit avec le diff avant/après. L'identité du visiteur n'est pas modifiable ici, elle provient du scan MRZ.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Numéro de badge mal saisi à l'accueil\",\n  \"badge_number\": \"B-2026-042\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('badge corrige', () => {",
+                  "  pm.expect(pm.response.json().badge_number).to.eql('B-2026-042');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erreur — correction sans motif (400)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/{{visit_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "{{visit_id}}"
+              ]
+            },
+            "description": "Sans `reason`, la correction est rejetée avant tout traitement.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"badge_number\": \"B-999\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));",
+                  "pm.test('erreur de validation', () => {",
+                  "  pm.expect(pm.response.json().error_code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Exporter le registre en CSV",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/export?format=csv",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "export"
+              ],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "csv"
+                }
+              ]
+            },
+            "description": "Mêmes filtres que le listing, sans pagination. UTF-8 avec BOM et séparateur point-virgule : c'est ce qu'attend Excel en configuration francophone. Au-delà du plafond défini dans `/settings`, l'export est refusé plutôt que tronqué en silence.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('un fichier CSV est renvoye', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('text/csv');",
+                  "  pm.expect(pm.response.headers.get('Content-Disposition')).to.include('attachment');",
+                  "});",
+                  "pm.test('en-tete de colonnes present', () => {",
+                  "  pm.expect(pm.response.text()).to.include('Nom du visiteur');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Export PDF — non encore disponible (501)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/export?format=pdf",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "export"
+              ],
+              "query": [
+                {
+                  "key": "format",
+                  "value": "pdf"
+                }
+              ]
+            },
+            "description": "La route et ses filtres sont en place ; le rendu PDF demandera une bibliothèque dédiée. L'API le dit franchement plutôt que de renvoyer un fichier bâclé.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('501', () => pm.response.to.have.status(501));",
+                  "pm.test('code d erreur explicite', () => {",
+                  "  pm.expect(pm.response.json().error_code).to.eql('EXPORT_FORMAT_UNAVAILABLE');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Annuler une visite",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/{{visit_id}}/cancel",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "{{visit_id}}",
+                "cancel"
+              ]
+            },
+            "description": "Annulation **logique** : statut `ANNULEE`, la visite reste consultable et sort de toutes les statistiques.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Doublon de saisie constaté lors du contrôle\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('annulee et motivee', () => {",
+                  "  pm.expect(b.statut).to.eql('ANNULEE');",
+                  "  pm.expect(b.cancellation_reason).to.be.a('string');",
+                  "  pm.expect(b.cancelled_at).to.not.eql(null);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erreur — annuler deux fois (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/{{visit_id}}/cancel",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "{{visit_id}}",
+                "cancel"
+              ]
+            },
+            "description": "Une visite déjà annulée ne peut plus l'être, ni être clôturée.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Nouvelle tentative\"\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409', () => pm.response.to.have.status(409));",
+                  "pm.test('conflit signale', () => {",
+                  "  pm.expect(pm.response.json().error_code).to.eql('VISIT_CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Administration — Statistiques",
+      "description": "Analytics du dashboard web. Les visites annulées sont exclues de tous les agrégats. Sans bornes, la fenêtre par défaut est de 30 jours ; la période réellement analysée est renvoyée dans chaque réponse.",
+      "item": [
+        {
+          "name": "Série temporelle",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/dashboard/stats/timeseries?granularity=day&date_from={{stats_date_from}}&date_to={{stats_date_to}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dashboard",
+                "stats",
+                "timeseries"
+              ],
+              "query": [
+                {
+                  "key": "granularity",
+                  "value": "day"
+                },
+                {
+                  "key": "date_from",
+                  "value": "{{stats_date_from}}"
+                },
+                {
+                  "key": "date_to",
+                  "value": "{{stats_date_to}}"
+                }
+              ]
+            },
+            "description": "`granularity` vaut `day`, `week` ou `month`. Toutes les tranches sont renvoyées, y compris celles à zéro : un graphe qui saute les jours creux laisse croire à une continuité inexistante.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('serie continue', () => {",
+                  "  pm.expect(b.points).to.be.an('array').that.is.not.empty;",
+                  "  pm.expect(b.points[0]).to.have.all.keys('bucket', 'visites', 'sorties');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Répartition par service",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/dashboard/stats/by-service",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dashboard",
+                "stats",
+                "by-service"
+              ]
+            },
+            "description": "Chaque entrée porte son nombre et sa part du total, en pourcentage.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('total et items presents', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b).to.have.property('total');",
+                  "  pm.expect(b.items).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Répartition par motif",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/dashboard/stats/by-purpose",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dashboard",
+                "stats",
+                "by-purpose"
+              ]
+            },
+            "description": "Les visites à motif libre sont regroupées sous une entrée `id: null` plutôt que d'être écartées du camembert.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Heures de pointe",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/dashboard/stats/peak-hours",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dashboard",
+                "stats",
+                "peak-hours"
+              ]
+            },
+            "description": "Les 24 heures sont toujours présentes, à zéro le cas échéant. En UTC.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('les 24 heures sont couvertes', () => {",
+                  "  pm.expect(pm.response.json().heures).to.have.lengthOf(24);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Durée moyenne de présence",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/dashboard/stats/avg-duration",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dashboard",
+                "stats",
+                "avg-duration"
+              ]
+            },
+            "description": "La médiane accompagne la moyenne : une visite oubliée en « présent » puis clôturée le lendemain suffit à faire dérailler une moyenne seule.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('moyenne et mediane exposees', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b).to.have.property('duree_moyenne_minutes');",
+                  "  pm.expect(b).to.have.property('duree_mediane_minutes');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Personnes les plus visitées",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/dashboard/stats/top-agents?limit=10",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "dashboard",
+                "stats",
+                "top-agents"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "10"
+                }
+              ]
+            },
+            "description": "Classement des agents du ministère par nombre de visites reçues.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Administration — Audit",
+      "description": "Journal en lecture seule. Aucune route d'écriture ni de suppression n'est exposée : une trace modifiable ne vaudrait rien lors d'un audit.",
+      "item": [
+        {
+          "name": "Journal des événements (paginé + filtres)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/audit-logs?page=1&page_size=20&action=visit",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "audit-logs"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                },
+                {
+                  "key": "action",
+                  "value": "visit"
+                }
+              ]
+            },
+            "description": "`action` filtre par **préfixe** : `visit` ramène `visit.created`, `visit.cancelled`… `metadata` porte le diff avant/après.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('enveloppe de pagination standard', () => {",
+                  "  pm.expect(b).to.have.all.keys('items', 'total', 'page', 'page_size');",
+                  "});",
+                  "pm.test('les actions visites sont tracees', () => {",
+                  "  const actions = b.items.map(e => e.action);",
+                  "  pm.expect(actions.some(a => a.startsWith('visit.'))).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Historique d'une entité précise",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/audit-logs?entity=visit&entity_id={{visit_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "audit-logs"
+              ],
+              "query": [
+                {
+                  "key": "entity",
+                  "value": "visit"
+                },
+                {
+                  "key": "entity_id",
+                  "value": "{{visit_id}}"
+                }
+              ]
+            },
+            "description": "Répond à « qui a modifié cette visite, quand, et qu'a-t-il changé ? ».",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Actions présentes dans le journal",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/audit-logs/actions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "audit-logs",
+                "actions"
+              ]
+            },
+            "description": "Alimente la liste déroulante du filtre côté dashboard, sans la coder en dur.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('liste d actions', () => {",
+                  "  pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Administration — Paramètres",
+      "description": "Réglages **métier** modifiables sans redéploiement. Tout ce qui touche à l'infrastructure ou aux secrets reste dans les variables d'environnement.",
+      "item": [
+        {
+          "name": "Lire les paramètres",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/settings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "settings"
+              ]
+            },
+            "description": "Valeurs par défaut de l'application, surchargées par celles enregistrées. Une base vide donne le comportement documenté.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('parametres attendus', () => {",
+                  "  const b = pm.response.json();",
+                  "  pm.expect(b).to.have.property('visit_long_duration_alert_minutes');",
+                  "  pm.expect(b).to.have.property('max_failed_login_attempts');",
+                  "  pm.expect(b).to.have.property('account_lockout_minutes');",
+                  "  pm.expect(b).to.have.property('visits_export_max_rows');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Modifier les paramètres",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/settings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "settings"
+              ]
+            },
+            "description": "Mise à jour partielle : seuls les champs fournis sont modifiés, les autres gardent leur valeur. Le changement est journalisé.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visit_long_duration_alert_minutes\": 180,\n  \"max_failed_login_attempts\": 5\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200', () => pm.response.to.have.status(200));",
+                  "pm.test('valeur appliquee', () => {",
+                  "  pm.expect(pm.response.json().visit_long_duration_alert_minutes).to.eql(180);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erreur — valeur hors bornes (400)",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/settings",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "settings"
+              ]
+            },
+            "description": "Les bornes sont déclarées dans le schéma : moins de 3 tentatives est refusé.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"max_failed_login_attempts\": 1\n}"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400', () => pm.response.to.have.status(400));",
+                  "pm.test('erreur de validation', () => {",
+                  "  pm.expect(pm.response.json().error_code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     }

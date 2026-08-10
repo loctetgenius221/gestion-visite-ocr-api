@@ -5,10 +5,10 @@ import uuid
 from sqlalchemy import ForeignKey, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import ArchivableMixin, Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 
-class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class Service(UUIDPrimaryKeyMixin, TimestampMixin, ArchivableMixin, Base):
     """Service / direction du ministère. Hiérarchie optionnelle via `parent_id`."""
 
     __tablename__ = "services"
@@ -29,7 +29,7 @@ class Service(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     agents: Mapped[list[Agent]] = relationship("Agent", back_populates="service")
 
 
-class Agent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class Agent(UUIDPrimaryKeyMixin, TimestampMixin, ArchivableMixin, Base):
     """Personnel du ministère susceptible d'être visité (distinct de `User`)."""
 
     __tablename__ = "agents"
@@ -47,7 +47,7 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     service: Mapped[Service] = relationship("Service", back_populates="agents")
 
 
-class Purpose(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+class Purpose(UUIDPrimaryKeyMixin, TimestampMixin, ArchivableMixin, Base):
     """Référentiel des motifs de visite."""
 
     __tablename__ = "purposes"

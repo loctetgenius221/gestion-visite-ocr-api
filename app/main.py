@@ -16,7 +16,19 @@ from app.core.database import dispose_engine, engine
 from app.core.handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
-from app.routers import auth, dashboard, ocr, referentiels, uploads, visits
+from app.routers import (
+    audit_logs,
+    auth,
+    dashboard,
+    ocr,
+    referentiels,
+    uploads,
+    users,
+    visits,
+)
+from app.routers import (
+    settings as settings_router,
+)
 from app.schemas.common import ErrorResponse
 from app.services.ocr_engine import get_ocr_engine
 
@@ -99,6 +111,11 @@ def create_app() -> FastAPI:
     application.include_router(referentiels.router, prefix=prefix)
     application.include_router(dashboard.router, prefix=prefix)
     application.include_router(uploads.router, prefix=prefix)
+    # Administration (dashboard web) — chaque route est gardée par `AdminUser`.
+    application.include_router(referentiels.admin_router, prefix=prefix)
+    application.include_router(users.router, prefix=prefix)
+    application.include_router(audit_logs.router, prefix=prefix)
+    application.include_router(settings_router.router, prefix=prefix)
 
     _mount_storage(application)
 

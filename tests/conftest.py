@@ -124,3 +124,28 @@ async def auth_headers(client: AsyncClient, seeded: dict[str, object]) -> dict[s
     )
     assert response.status_code == 200, response.text
     return {"Authorization": f"Bearer {response.json()['access_token']}"}
+
+
+@pytest.fixture
+async def admin(session: AsyncSession, seeded: dict[str, object]) -> User:
+    """Compte administrateur : le seul habilité sur les routes du dashboard web."""
+    user = User(
+        nom="Administrateur Test",
+        identifiant="admin001",
+        mot_de_passe_hash=hash_password(TEST_PASSWORD),
+        poste="Administration",
+        role=UserRole.ADMIN,
+        is_active=True,
+    )
+    session.add(user)
+    await session.commit()
+    return user
+
+
+@pytest.fixture
+async def admin_headers(client: AsyncClient, admin: User) -> dict[str, str]:
+    response = await client.post(
+        "/auth/login", json={"identifiant": "admin001", "mot_de_passe": TEST_PASSWORD}
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}

@@ -93,12 +93,53 @@ class VisitRead(ORMModel):
     created_at: datetime
     updated_at: datetime
 
+    cancelled_at: datetime | None = None
+    cancellation_reason: str | None = None
+
     visitor: VisitorRead
     service: ServiceRead
     agent: AgentRead
     purpose: PurposeRead | None = None
     checked_in_user: UserRead
     checked_out_user: UserRead | None = None
+    cancelled_user: UserRead | None = None
+
+
+class VisitUpdate(BaseModel):
+    """Correction d'une visite par un administrateur (erreur de saisie).
+
+    Le `reason` est obligatoire : c'est lui qui rend la modification défendable
+    lors d'un audit. Il n'est pas stocké sur la visite mais dans le journal, avec
+    le diff avant/après.
+
+    L'identité du visiteur n'est pas modifiable ici : elle provient du scan MRZ et
+    la corriger relèverait d'un autre geste métier, avec sa propre traçabilité.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    reason: str = Field(min_length=3, max_length=500)
+
+    service_id: uuid.UUID | None = None
+    agent_id: uuid.UUID | None = None
+    purpose_id: uuid.UUID | None = None
+    motif_libre: str | None = Field(default=None, max_length=500)
+    badge_number: str | None = Field(default=None, max_length=50)
+    checked_in_at: datetime | None = None
+    checked_out_at: datetime | None = None
+
+    @model_validator(mode="after")
+    def _au_moins_un_champ(self) -> VisitUpdate:
+        modifiables = self.model_dump(exclude={"reason"}, exclude_unset=True)
+        if not modifiables:
+            raise ValueError("Aucun champ à modifier n'a été fourni.")
+        return self
+
+
+class VisitCancelRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    reason: str = Field(min_length=3, max_length=500)
 
 
 class VisitFilters(BaseModel):
@@ -107,6 +148,13 @@ class VisitFilters(BaseModel):
     date_to: datetime | None = None
     search: str | None = Field(default=None, max_length=100)
     sort: Literal["asc", "desc"] = "desc"
+
+    # Filtres du dashboard web. Sans effet sur l'app mobile, qui ne les envoie pas.
+    service_id: uuid.UUID | None = None
+    agent_id: uuid.UUID | None = None
+    purpose_id: uuid.UUID | None = None
+    # Auteur de l'enregistrement : correspond à `visits.checked_in_by`.
+    created_by: uuid.UUID | None = None
 
 
 class VisitSyncRequest(BaseModel):
