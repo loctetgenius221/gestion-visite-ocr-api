@@ -35,8 +35,18 @@ class Settings(BaseSettings):
     # --- Sécurité / JWT ---
     JWT_SECRET_KEY: str = "changeme-dev-secret-key"
     JWT_ALGORITHM: str = "HS256"
+    # Court volontairement : l'access token accompagne chaque requête, donc c'est
+    # lui qui fuite en premier. Sa brièveté est invisible pour l'agent tant que le
+    # client renouvelle en silence via `/auth/refresh`.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Durée d'une session sur l'appareil. Le poste d'accueil tourne toute la
+    # journée : une reconnexion hebdomadaire était une gêne inutile.
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    # Renouvellement glissant : passé la moitié de sa vie, le refresh token est
+    # remplacé lors d'un rafraîchissement. Un agent qui utilise l'application
+    # régulièrement n'est donc jamais déconnecté ; un appareil laissé de côté voit
+    # sa session expirer d'elle-même. Voir ADR-015.
+    REFRESH_TOKEN_SLIDING: bool = True
 
     # --- CORS ---
     # Origines autorisées, séparées par des virgules (ex: "http://localhost:3000,https://app.example.com")

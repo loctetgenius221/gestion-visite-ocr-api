@@ -18,6 +18,7 @@ from app.services.mrz_parser import (
     build_candidate,
     compute_check_digit,
     detect_format,
+    est_ligne_mrz,
     extract_nin,
     parse_mrz_lines,
     sanitize_line,
@@ -236,6 +237,107 @@ class TestExtractionDuNin:
 
     def test_liste_vide(self):
         assert extract_nin([]) is None
+
+
+class TestNinJamaisConfonduAvecLeNumeroDeCarte:
+    """Le pire résultat possible serait un identifiant faux mais crédible.
+
+    Le numéro de carte sénégalais fait 17 chiffres et est imprimé sur la même
+    zone que le NIN. Tronqué par l'OCR, il peut tomber exactement à 13 chiffres.
+    Symptôme observé en production : le champ NIN affichait le numéro de document.
+    """
+
+    NUMERO_CARTE = "10120030201000558"
+
+    def test_un_numero_de_carte_tronque_a_13_chiffres_est_rejete(self):
+        assert extract_nin(["1012003020100"], self.NUMERO_CARTE) is None
+
+    def test_le_numero_de_carte_complet_est_rejete(self):
+        assert extract_nin(["1 0120030 2010 00558"], self.NUMERO_CARTE) is None
+
+    def test_le_vrai_nin_passe_malgre_le_garde_fou(self):
+        assert extract_nin(["NIN 1 895 2003 00511"], self.NUMERO_CARTE) == "1895200300511"
+
+    def test_le_nin_est_prefere_au_numero_de_carte_sur_la_meme_ligne(self):
+        lignes = ["NIN 1 895 2003 00511 CARTE 1 0120030 2010 00558"]
+        assert extract_nin(lignes, self.NUMERO_CARTE) == "1895200300511"
+
+    def test_ordre_inverse_le_libelle_tranche(self):
+        lignes = ["CARTE 1 0120030 2010 00558 NIN 1 895 2003 00511"]
+        assert extract_nin(lignes, self.NUMERO_CARTE) == "1895200300511"
+
+    def test_sans_numero_de_document_le_garde_fou_est_inactif(self):
+        """Rétro-compatibilité : l'argument est optionnel."""
+        assert extract_nin(["1012003020100"]) == "1012003020100"
+
+    def test_le_champ_nin_de_la_reponse_ne_reprend_jamais_le_numero_document(self):
+        """Contrôle de bout en bout, sur le parcours réellement emprunté."""
+        result = parse_mrz_lines(CNI_SEN_LINES)
+
+        assert result.fields.numero_document == CNI_SEN_NUMERO
+        assert result.fields.nin != result.fields.numero_document
+
+
+class TestRobustesseDeLExtractionDuNin:
+    """Variantes de sortie OCR observées ou plausibles sur photo réelle."""
+
+    NIN = "1895200300511"
+
+    def test_libelle_seul_sur_sa_ligne_chiffres_en_dessous(self):
+        """L'OCR sépare régulièrement le libellé de ses chiffres."""
+        assert extract_nin(["NIN", "1 895 2003 00511"]) == self.NIN
+
+    def test_libelle_avec_deux_points(self):
+        assert extract_nin(["NIN: 1 895 2003 00511"]) == self.NIN
+
+    def test_libelle_ponctue(self):
+        assert extract_nin(["N.I.N 1 895 2003 00511"]) == self.NIN
+
+    def test_libelle_imprime_en_toutes_lettres(self):
+        lignes = ["N° d'identification nationale", "1 895 2003 00511"]
+        assert extract_nin(lignes) == self.NIN
+
+    def test_prefixe_numero_sans_libelle_nin(self):
+        """« N° » coûte deux caractères non numériques : la ligne reste acceptable."""
+        assert extract_nin(["N° 1 895 2003 00511"]) == self.NIN
+
+    def test_confusions_ocr_sur_les_chiffres(self):
+        # S lu pour 5, O lu pour 0 — les deux confusions les plus fréquentes.
+        assert extract_nin(["NIN 1 89S 2003 0O511"]) == self.NIN
+
+    def test_les_lignes_mrz_sont_ecartees_de_la_recherche(self):
+        """Corriger les confusions sur un MRZ produirait un faux NIN très crédible.
+
+        Sans ce filtrage, `NIN` suivi d'une ligne MRZ ferait lire les chiffres du
+        MRZ comme s'ils étaient ceux du NIN.
+        """
+        assert extract_nin(["NIN", CNI_SEN_LINES[0]]) is None
+
+    def test_sortie_ocr_complete_avec_bruit(self):
+        lignes = [
+            "REPUBLIQUE DU SENEGAL",
+            "CARTE NATIONALE D'IDENTITE",
+            "NIN1 895 2003 00511",
+            "na",
+            *CNI_SEN_LINES,
+        ]
+        assert extract_nin(lignes, CNI_SEN_NUMERO) == self.NIN
+
+
+class TestDetectionDeLigneMrz:
+    def test_une_ligne_mrz_est_reconnue(self):
+        for ligne in CNI_SEN_LINES:
+            assert est_ligne_mrz(ligne) is True
+
+    def test_une_ligne_imprimee_longue_nest_pas_prise_pour_du_mrz(self):
+        """Les espaces trahissent une ligne imprimée, quelle que soit sa longueur."""
+        assert est_ligne_mrz("NIN 1 895 2003 00511 CARTE 1 0120030 2010 00558") is False
+
+    def test_un_mrz_dont_les_chevrons_ont_disparu_reste_detecte(self):
+        assert est_ligne_mrz("NDIAYEKKFATOUKKKKKKKKKKKKKKKKK") is True
+
+    def test_une_ligne_courte_nest_pas_du_mrz(self):
+        assert est_ligne_mrz("DAKAR") is False
 
 
 class TestCheckDigit:

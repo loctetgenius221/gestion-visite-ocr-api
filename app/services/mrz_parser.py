@@ -306,7 +306,104 @@ def _resolve_document_number(candidate: MrzCandidate) -> tuple[str, bool]:
     return numero, compute_check_digit(numero) == overflow[-1]
 
 
-def extract_nin(ocr_lines: list[str]) -> str | None:
+# Libellés observés devant le NIN sur les CNI CEDEAO sénégalaises. Pas de `\b`
+# final : l'OCR colle fréquemment le libellé au premier chiffre (« NIN1 895 … »).
+_LIBELLE_NIN = re.compile(r"N[.\s]?I[.\s]?N|IDENTIFICATION\s+NATIONALE")
+
+# Confusions OCR classiques, appliquées **uniquement** aux suites candidates, jamais
+# au texte entier : un `O` reste un `O` dans un nom de famille.
+_CONFUSIONS_VERS_CHIFFRE = str.maketrans(
+    {
+        "O": "0",
+        "Q": "0",
+        "D": "0",
+        "I": "1",
+        "L": "1",
+        "|": "1",
+        "S": "5",
+        "B": "8",
+        "Z": "2",
+        "G": "6",
+    }
+)
+
+# Budget de lettres toléré sur une ligne non libellée : couvre un préfixe « N° »
+# sans laisser passer une ligne bavarde qui totaliserait 13 chiffres par hasard.
+_MAX_LETTRES_LIGNE_NUMERIQUE = 2
+
+
+def _chiffres(texte: str) -> str:
+    """Suite des chiffres du texte, confusions OCR corrigées et séparateurs retirés."""
+    return re.sub(r"\D", "", texte.upper().translate(_CONFUSIONS_VERS_CHIFFRE))
+
+
+def est_ligne_mrz(ligne: str) -> bool:
+    """La ligne appartient-elle à la bande MRZ plutôt qu'à la zone imprimée ?
+
+    Le NIN n'est jamais dans le MRZ (ADR-005). Écarter ces lignes de la recherche
+    évite un faux positif coûteux : corriger les confusions OCR sur un MRZ produit
+    une longue suite de chiffres où n'importe quel groupe de 13 se laisserait
+    prendre pour un NIN.
+    """
+    nettoyee = ligne.strip().upper()
+    if "<" in nettoyee or "«" in nettoyee:
+        return True
+    # Filet de sécurité pour un MRZ dont aucun `<` n'a survécu à l'OCR : il reste
+    # une longue suite alphanumérique **compacte**. La contrainte sur les espaces
+    # est essentielle — sans elle, une ligne imprimée bavarde mais longue
+    # (« NIN 1 895 … CARTE 1 0120030 … ») serait écartée à tort.
+    return (
+        len(nettoyee.replace(" ", "")) >= 25
+        and nettoyee.count(" ") <= 2
+        and sum(c.isalpha() for c in nettoyee) >= 3
+    )
+
+
+def _appartient_au_numero_document(candidat: str, numero_document: str | None) -> bool:
+    """Le candidat est-il le numéro de carte, ou un fragment de celui-ci ?
+
+    Garde-fou central : le numéro de carte sénégalais fait 17 chiffres et est
+    imprimé sur la même zone que le NIN. Tronqué par l'OCR, il peut tomber
+    exactement à 13 chiffres et se faire passer pour un NIN — c'est le pire
+    résultat possible, un identifiant faux mais crédible.
+    """
+    if not numero_document:
+        return False
+    document = re.sub(r"\D", "", numero_document)
+    if not document:
+        return False
+    return candidat in document or document in candidat
+
+
+def _candidat_libelle(lignes: list[str], index: int) -> str | None:
+    """Cherche un NIN annoncé par son libellé, sur la ligne ou sur la suivante.
+
+    L'OCR sépare régulièrement le libellé de ses chiffres en deux lignes : on
+    concatène donc avec la ligne suivante quand elle n'est pas du MRZ.
+    """
+    texte = lignes[index]
+    if index + 1 < len(lignes) and not est_ligne_mrz(lignes[index + 1]):
+        texte = f"{texte} {lignes[index + 1]}"
+
+    correspondance = _LIBELLE_NIN.search(texte.upper())
+    if correspondance is None:
+        return None
+
+    # Les 13 premiers chiffres **après** le libellé : sur une ligne portant à la
+    # fois le NIN et le numéro de carte, l'ordre d'impression tranche.
+    suite = _chiffres(texte[correspondance.end() :])
+    return suite[:_NIN_LENGTH] if len(suite) >= _NIN_LENGTH else None
+
+
+def _candidat_numerique(ligne: str) -> str | None:
+    """Ligne quasi exclusivement numérique, sans libellé."""
+    if sum(c.isalpha() for c in ligne) > _MAX_LETTRES_LIGNE_NUMERIQUE:
+        return None
+    chiffres = _chiffres(ligne)
+    return chiffres if len(chiffres) == _NIN_LENGTH else None
+
+
+def extract_nin(ocr_lines: list[str], numero_document: str | None = None) -> str | None:
     """Récupère le NIN dans les lignes imprimées lues au-dessus du MRZ (ADR-005).
 
     Le NIN n'est **pas** encodé dans le MRZ — vérifié sur deux cartes réelles : la
@@ -314,26 +411,28 @@ def extract_nin(ocr_lines: list[str]) -> str | None:
     juste au-dessus de la bande MRZ, sous la forme `NIN 1 895 2003 00511`, et tombe
     donc dans la même passe OCR.
 
-    Deux stratégies, de la plus sûre à la plus permissive :
+    Deux stratégies, la libellée primant sur la structurelle :
 
-    1. une ligne portant le libellé `NIN` — l'OCR colle fréquemment le libellé au
-       premier chiffre (`NIN1 895 …`), d'où un simple filtrage des chiffres ;
-    2. à défaut, une ligne réduite à exactement 13 chiffres.
+    1. un libellé `NIN` (ou `N.I.N`, `identification nationale`), suivi de 13
+       chiffres — éventuellement sur la ligne suivante ;
+    2. à défaut, une ligne réduite à 13 chiffres, deux lettres tolérées pour
+       absorber un préfixe « N° ».
+
+    `numero_document`, quand il est fourni, sert de garde-fou : un candidat qui
+    n'est qu'un fragment du numéro de carte est rejeté. Sans lui, un numéro de
+    carte tronqué par l'OCR passerait pour un NIN.
     """
-    for ligne in ocr_lines:
-        normalisee = ligne.upper().replace(" ", "")
-        if "NIN" not in normalisee:
-            continue
-        chiffres = re.sub(r"\D", "", normalisee)
-        if len(chiffres) == _NIN_LENGTH:
-            return chiffres
+    lignes = [ligne for ligne in ocr_lines if not est_ligne_mrz(ligne)]
 
-    for ligne in ocr_lines:
-        chiffres = re.sub(r"\D", "", ligne)
-        # Sans le libellé, on n'accepte que des lignes quasi exclusivement numériques :
-        # une ligne bavarde qui totaliserait 13 chiffres serait un faux positif.
-        if len(chiffres) == _NIN_LENGTH and len(re.sub(r"[\s\d]", "", ligne)) <= 1:
-            return chiffres
+    for index in range(len(lignes)):
+        candidat = _candidat_libelle(lignes, index)
+        if candidat and not _appartient_au_numero_document(candidat, numero_document):
+            return candidat
+
+    for ligne in lignes:
+        candidat = _candidat_numerique(ligne)
+        if candidat and not _appartient_au_numero_document(candidat, numero_document):
+            return candidat
 
     return None
 
@@ -393,8 +492,14 @@ def parse_mrz_lines(raw_lines: list[str]) -> MrzScanResponse:
             prenom=_clean_name(fields.name),
             numero_document=numero_document,
             # Le NIN vient de la zone imprimée lue dans la même passe OCR, jamais du
-            # MRZ qui ne le contient pas (ADR-005).
-            nin=extract_nin(raw_lines) if document_type is DocumentType.CNI else None,
+            # MRZ qui ne le contient pas (ADR-005). `numero_document` est transmis
+            # comme garde-fou : un fragment du numéro de carte ne doit jamais être
+            # renvoyé comme NIN.
+            nin=(
+                extract_nin(raw_lines, numero_document)
+                if document_type is DocumentType.CNI
+                else None
+            ),
             nationalite=(fields.nationality or "").replace("<", "") or None,
             date_naissance=_parse_mrz_date(fields.birth_date, is_expiry=False),
             sexe=sexe,

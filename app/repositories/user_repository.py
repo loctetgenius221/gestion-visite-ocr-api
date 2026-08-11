@@ -156,6 +156,24 @@ class UserSessionRepository:
         if record is not None:
             record.last_used_at = now
 
+    async def rotate(
+        self, record: UserSession, *, jti: str, expires_at: datetime, now: datetime
+    ) -> None:
+        """Fait glisser la session sur un nouveau refresh token, **sur la même ligne**.
+
+        Créer une ligne par renouvellement ferait enfler la table — un poste
+        d'accueil rafraîchit son token toutes les 30 minutes — et noierait la liste
+        des sessions actives du dashboard sous des doublons du même appareil.
+
+        L'ancien `jti` n'est pas révoqué : un client qui ignore le nouveau token
+        continue de fonctionner jusqu'à l'expiration de l'ancien. C'est ce qui rend
+        le glissement rétro-compatible (voir ADR-015).
+        """
+        record.jti = jti
+        record.expires_at = expires_at
+        record.last_used_at = now
+        await self.session.flush()
+
     async def mark_revoked(self, record: UserSession, now: datetime) -> None:
         if record.revoked_at is None:
             record.revoked_at = now

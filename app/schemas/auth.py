@@ -41,6 +41,17 @@ class AccessTokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
     expires_in: int
+    # Champ **additif** : renseigné uniquement quand le serveur a fait glisser la
+    # session. Un client qui l'ignore continue de fonctionner avec son ancien
+    # token jusqu'à l'expiration de celui-ci — d'où l'absence de rupture de
+    # contrat. Un client qui l'enregistre n'est jamais déconnecté tant qu'il sert.
+    refresh_token: str | None = Field(
+        default=None,
+        description=(
+            "Nouveau refresh token à stocker en remplacement du précédent. "
+            "Absent tant que la session n'a pas besoin d'être prolongée."
+        ),
+    )
 
 
 class LogoutRequest(BaseModel):

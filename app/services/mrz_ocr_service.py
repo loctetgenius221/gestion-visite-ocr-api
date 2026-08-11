@@ -63,6 +63,10 @@ class MrzOcrService:
                 "mrz_format": response.mrz_format.value,
                 "mrz_valid": response.mrz_valid,
                 "processing_time_ms": response.processing_time_ms,
+                # Booléen et non la valeur : le NIN est une donnée personnelle, il
+                # n'a rien à faire dans un journal. Savoir qu'il n'a pas été lu
+                # suffit à repérer une régression de l'extraction en production.
+                "nin_trouve": response.fields.nin is not None,
             },
         )
         return response

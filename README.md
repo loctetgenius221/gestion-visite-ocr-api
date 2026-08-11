@@ -54,6 +54,27 @@ Créés par `python -m app.seeds`, mot de passe réglé par `SEED_AGENT_PASSWORD
 | `superviseur001` | `SUPERVISEUR` | app mobile — aucun droit d'administration |
 | `admin001` | `ADMIN` | dashboard web, accès global à l'API |
 
+### Créer un compte à la demande
+
+`app.seeds` pose un jeu de démonstration complet. Pour n'ajouter **qu'un compte** —
+un accès de test, ou le premier administrateur d'une installation de production
+où les comptes de démonstration n'ont rien à faire :
+
+```bash
+uv run python -m app.create_user test001
+uv run python -m app.create_user admin002 --role ADMIN --nom "Awa Ndiaye"
+uv run python -m app.create_user agent007 --mot-de-passe "MotDePasseSolide2026"
+```
+
+Sans `--mot-de-passe`, un mot de passe fort est généré et affiché **une seule
+fois** : seul son hash bcrypt part en base. Le script écrit dans la base désignée
+par `DATABASE_URL`, refuse un identifiant déjà pris et un mot de passe de moins de
+12 caractères.
+
+> Une fois l'API en ligne, la même opération se fait par `POST /api/v1/users`
+> depuis le dashboard. Cette commande sert surtout à l'amorçage, quand aucun
+> compte administrateur n'existe encore pour appeler cette route.
+
 ---
 
 ## Tester l'API avec Postman

@@ -390,7 +390,7 @@ cadrage, de la distance et de l'angle de prise de vue.
 ### Une seule passe OCR pour le NIN et le MRZ
 
 Le NIN est imprimé juste **au-dessus** du MRZ. Plutôt que deux passes (une par zone,
-soit le double de la latence), une bande unique part de 10 % au-dessus du MRZ détecté
+soit le double de la latence), une bande unique part de 20 % au-dessus du MRZ détecté
 et descend **jusqu'au bord bas de la carte**.
 
 Ce prolongement jusqu'au bord est indispensable : la bande morphologique s'arrête au
@@ -410,8 +410,118 @@ chiffre), avec repli sur une ligne de 13 chiffres quasi exclusivement numérique
 lignes imprimées ne polluent pas le MRZ : le filtre de `build_candidate` les écarte,
 faute de remplisseur `<` et de longueur suffisante.
 
+### Correctif du 2026-08-07 — le champ NIN affichait le numéro de carte
+
+**Symptôme.** En production, après quelques scans réussis, le champ NIN de l'app
+mobile s'est mis à afficher le numéro de document, sur plusieurs cartes différentes.
+
+**Cause.** `extract_nin` renvoyait `null` bien trop souvent, et le client comblait
+le vide par `numero_document`. Cinq modes de défaillance, reproduits en test :
+
+| Sortie OCR | Ancien résultat |
+|---|---|
+| `N° 1 895 2003 00511` | `null` — « N° » dépassait le budget d'un caractère non numérique |
+| `NIN 1 89S 2003 0O511` | `null` — confusions `S`/`5` et `O`/`0` non corrigées |
+| `NIN … CARTE …` sur une ligne | `null` — 30 chiffres au lieu de 13 |
+| Libellé et chiffres sur deux lignes | `null` — recherche ligne par ligne |
+| Numéro de carte tronqué à 13 chiffres | **le numéro de carte**, renvoyé comme NIN |
+
+La dernière ligne est la plus grave : un identifiant faux mais parfaitement
+crédible, impossible à repérer à l'œil.
+
+**Décisions.**
+
+1. **Le numéro de document est passé en garde-fou.** Tout candidat qui est un
+   fragment du numéro de carte — ou l'inverse — est rejeté. Le numéro sénégalais
+   fait 17 chiffres et vit sur la même zone imprimée que le NIN : sans ce
+   contrôle, sa troncature par l'OCR produit un faux NIN.
+2. **Les lignes de MRZ sont écartées de la recherche.** Corriger les confusions
+   OCR sur un MRZ produit une longue suite de chiffres où n'importe quel groupe
+   de 13 se laisserait prendre pour un NIN.
+3. **Les confusions OCR sont corrigées sur les suites candidates uniquement**,
+   jamais sur le texte entier : un `O` reste un `O` dans un nom de famille.
+4. **La marge au-dessus du MRZ passe de 10 % à 20 %.** À 10 %, sur une carte
+   redressée de 820 px, il ne restait que ~82 px au-dessus du MRZ — à peine une
+   ligne de texte. Selon le cadrage, la ligne NIN tombait hors de la zone envoyée
+   à l'OCR.
+
+**Côté client.** Un repli sur `numero_document` quand `nin` est nul est à retirer :
+il transforme une donnée absente en donnée fausse. `nin: null` doit rester visible
+comme tel, à charge pour l'agent de le saisir.
+
 ### Effet de bord : moins d'orientations à tester
 
 La carte redressée est ramenée en paysage, donc l'ADR-012 se simplifie quand elle est
 détectée : **2 candidats** (endroit / à l'envers) au lieu de 4. Le repli sur les
 quatre quarts de tour ne subsiste que si aucune carte n'est localisée.
+
+---
+
+## ADR-015 — Session longue et glissante, jamais éternelle
+
+**Contexte.** L'agent du poste d'accueil est présent toute la journée et les
+visites s'enchaînent. Une reconnexion hebdomadaire — durée initiale du refresh
+token — est une friction inutile, et la demande était d'aller vers « jamais, sauf
+déconnexion volontaire ».
+
+### Ce qui produit réellement la fatigue
+
+Il faut distinguer deux horloges, souvent confondues :
+
+| Jeton | Durée | Visible par l'agent ? |
+|---|---|---|
+| `access` | 30 min | **Non**, si le client le renouvelle en silence |
+| `refresh` | 30 jours | Oui : à son expiration, écran de connexion |
+
+Un agent qui se reconnecte plusieurs fois par jour ne souffre donc pas d'une durée
+trop courte, mais d'un **client sans intercepteur de rafraîchissement**. Allonger
+les durées ne corrigerait rien. Le diagnostic se fait par le journal d'audit :
+`GET /api/v1/audit-logs?action=auth.login.success` — plus d'une connexion par
+agent et par mois signale un problème côté client.
+
+### Décision : glissement plutôt qu'éternité
+
+1. `REFRESH_TOKEN_EXPIRE_DAYS` passe de **7 à 30 jours**.
+2. **Renouvellement glissant** : passé la moitié de sa vie, le refresh token est
+   remplacé lors d'un rafraîchissement, et le nouveau est renvoyé dans un champ
+   `refresh_token` de la réponse de `POST /auth/refresh`.
+
+Effet recherché : un appareil qui sert quotidiennement voit sa session repoussée
+indéfiniment — l'agent n'est jamais déconnecté. Un appareil qui cesse d'être
+utilisé voit sa session mourir seule au bout de 30 jours.
+
+### Pourquoi pas « jamais »
+
+Un jeton sans expiration sur une tablette de poste d'accueil est une **clé
+permanente** vers des pièces d'identité. Perdue ou remplacée, elle reste valable
+indéfiniment, et plus personne ne se souvient qu'elle existe. L'expiration par
+inactivité est le seul mécanisme qui nettoie sans intervention humaine.
+
+Le glissement donne le confort demandé sans ce défaut : l'usage entretient la
+session, l'abandon la referme.
+
+### Ce qui coupe une session, malgré le glissement
+
+Déconnexion volontaire · révocation à distance par un administrateur
+(`DELETE /users/{id}/sessions/{sessionId}`) · désactivation du compte ·
+réinitialisation du mot de passe. Ces quatre chemins sont couverts par des tests.
+
+### Rétro-compatibilité et limite assumée
+
+Le champ `refresh_token` de la réponse est **additif**, et l'ancien jeton **n'est
+pas révoqué** lors du glissement : un client qui ignore le champ continue de
+fonctionner jusqu'à l'expiration de son jeton. Sans cela, la mise en production
+aurait déconnecté toutes les tablettes.
+
+Contrepartie : un refresh token volé reste utilisable jusqu'à son terme, même
+après glissement. La rotation stricte — révocation immédiate de l'ancien jeton, et
+détection de vol par réutilisation — deviendra possible une fois que l'application
+mobile enregistrera systématiquement le jeton renvoyé. À reprendre à ce
+moment-là.
+
+### Note d'implémentation
+
+Le glissement réécrit le `jti` **sur la ligne de session existante** plutôt que
+d'en créer une nouvelle. Une ligne par rafraîchissement ferait enfler la table —
+un poste rafraîchit toutes les 30 minutes — et noierait la liste des sessions
+actives du dashboard sous des doublons du même appareil.

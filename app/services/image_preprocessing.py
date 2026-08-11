@@ -50,7 +50,14 @@ _CARD_CANONICAL_WIDTH = 1300
 _CARD_CANONICAL_HEIGHT = int(_CARD_CANONICAL_WIDTH / _CARD_ASPECT_RATIO)
 
 # Marge remontée au-dessus de la bande MRZ pour englober la ligne NIN imprimée.
-_NIN_MARGIN_RATIO = 0.10
+#
+# 0,10 était trop juste : sur une carte redressée de 820 px de haut, cela ne
+# laissait que ~82 px au-dessus du MRZ, soit à peine la hauteur d'une ligne de
+# texte. Selon le cadrage, la ligne NIN tombait hors de la zone envoyée à l'OCR et
+# le champ revenait vide. 0,20 la capture avec une marge confortable ; le bruit
+# supplémentaire est sans conséquence, `extract_nin` filtrant par libellé et par
+# structure.
+_NIN_MARGIN_RATIO = 0.20
 # Sans détection morphologique, on retient tout le bas de la carte.
 _FALLBACK_BOTTOM_RATIO = 0.50
 

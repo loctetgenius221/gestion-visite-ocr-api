@@ -14,6 +14,7 @@ from app.core.errors import (
 )
 from app.core.logging import get_logger
 from app.core.security import (
+    TokenPayload,
     create_access_token,
     create_refresh_token,
     decode_token,
@@ -175,15 +176,64 @@ class AuthService:
             raise InvalidTokenError("Ce refresh token a été révoqué.")
 
         user = await self._load_active_user(payload.subject)
+        maintenant = datetime.now(UTC)
         access_token, _ = create_access_token(
             str(user.id), {"role": user.role.value, "identifiant": user.identifiant}
         )
-        await self.sessions.touch(payload.jti, datetime.now(UTC))
+
+        nouveau_refresh = await self._faire_glisser_la_session(user, payload, maintenant)
+
         await self.session.commit()
         return AccessTokenResponse(
             access_token=access_token,
             expires_in=settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            refresh_token=nouveau_refresh,
         )
+
+    async def _faire_glisser_la_session(
+        self, user: User, payload: TokenPayload, maintenant: datetime
+    ) -> str | None:
+        """Prolonge la session d'un appareil qui sert, et retourne le nouveau token.
+
+        Retourne `None` quand il n'y a rien à prolonger — c'est le cas courant.
+
+        Le glissement n'a lieu que pour une session **connue** : un refresh token
+        émis avant la mise en place du suivi des sessions n'a pas de ligne en base,
+        on se contente alors de renouveler l'access token. Il vivra jusqu'à sa
+        propre expiration, sans se prolonger.
+        """
+        session = await self.sessions.get_by_jti(payload.jti)
+        if session is None:
+            return None
+
+        session.last_used_at = maintenant
+        if not settings.REFRESH_TOKEN_SLIDING or not self._proche_de_lexpiration(
+            payload.expires_at, maintenant
+        ):
+            return None
+
+        nouveau_token, nouveau_payload = create_refresh_token(str(user.id))
+        await self.sessions.rotate(
+            session,
+            jti=nouveau_payload.jti,
+            expires_at=nouveau_payload.expires_at,
+            now=maintenant,
+        )
+        logger.info(
+            "Session prolongée",
+            extra={"identifiant": user.identifiant, "session_id": str(session.id)},
+        )
+        return nouveau_token
+
+    @staticmethod
+    def _proche_de_lexpiration(expires_at: datetime, maintenant: datetime) -> bool:
+        """Le token a-t-il consommé plus de la moitié de sa vie ?
+
+        Ce seuil borne le renouvellement : sans lui, chaque rafraîchissement
+        émettrait un token — soit toutes les 30 minutes — pour aucun gain.
+        """
+        duree_totale = timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
+        return (expires_at - maintenant) < duree_totale / 2
 
     async def logout(self, refresh_token: str) -> None:
         """Révoque le refresh token courant en l'ajoutant à la liste de révocation."""
