@@ -525,3 +525,72 @@ Le glissement réécrit le `jti` **sur la ligne de session existante** plutôt q
 d'en créer une nouvelle. Une ligne par rafraîchissement ferait enfler la table —
 un poste rafraîchit toutes les 30 minutes — et noierait la liste des sessions
 actives du dashboard sous des doublons du même appareil.
+
+---
+
+## ADR-016 — Le NIN est alphanumérique, et se lit par blocs
+
+**Contexte.** L'ADR-014 lisait le NIN comme une suite de **13 chiffres**. Une carte
+réelle (2026-08-14) porte `NIN 2 K05 2012 00108` : le code d'état civil contient une
+lettre. L'hypothèse « 13 chiffres » est donc **infirmée**.
+
+### Deux défaillances, dont une silencieuse et une dangereuse
+
+| Sortie OCR | Ancien résultat | Pourquoi |
+|---|---|---|
+| `NIN 2 K05 2012 00108` | `null` | `K` n'a pas d'équivalent numérique : il était **supprimé**, il ne restait que 12 chiffres |
+| `NIN 2 D05 2012 00108` | `2005201200108` | `D` est une confusion OCR connue : traduit en `0`, le compte retombait à 13 — **NIN faux mais crédible** |
+
+Le second cas est celui que le garde-fou du numéro de carte (ADR-014) cherchait
+déjà à éviter, réapparu par un autre chemin. Un NIN faux ne se repère pas à l'œil.
+
+### Structure retenue
+
+```
+2   K05   2012   00108
+│    │      │      └── numéro d'ordre séquentiel, 5 chiffres
+│    │      └───────── année d'enregistrement, 4 chiffres
+│    └──────────────── code d'état civil (commune de déclaration),
+│                      3 caractères **alphanumériques**
+└───────────────────── sexe : 1 (homme) ou 2 (femme)
+```
+
+`_lire_nin` valide chaque bloc séparément et corrige les confusions OCR **vers le
+chiffre**, y compris sur le code d'état civil. Une lettre sans équivalent numérique
+(`K`, `M`, `R`…) y survit donc telle quelle ; un `S` lu pour un `5` est redressé.
+
+### Limite assumée
+
+Un code d'état civil commençant réellement par `D`, `O`, `S`, `B`, `Z`, `G`, `I`,
+`L` ou `Q` sera numérisé à tort. Sans référentiel des communes, **rien ne départage
+les deux lectures** : on tranche pour la confusion OCR, incomparablement plus
+fréquente qu'une commune dont le code débute par l'une de ces neuf lettres. Le
+comportement est figé par un test, pour qu'il reste un choix et non une surprise.
+
+Le jour où le référentiel des codes d'état civil est disponible, il remplace cette
+heuristique par une vérification exacte — c'est le bon moment pour rouvrir l'ADR.
+
+### Ce qui remplace le comptage de chiffres
+
+La validation par blocs est plus stricte que « 13 chiffres », mais pas suffisante à
+elle seule : un numéro de carte de 17 chiffres contient, en position 4, treize
+caractères structurellement valides. Deux contrôles la complètent :
+
+1. **Le bruit autour du NIN est borné à 2 caractères** de chaque côté sur une ligne
+   sans libellé — de quoi absorber un préfixe « N° », pas de quoi laisser une ligne
+   bavarde offrir treize caractères pris en son milieu. C'est ce bornage qui écarte
+   le numéro de carte, désormais **sans dépendre du garde-fou**.
+2. **L'année doit être passée** (`1900 ≤ année ≤ année courante`). C'est le contrôle
+   le plus discriminant : les découpages parasites produisent presque toujours une
+   année absurde (`0030`, `3020`).
+
+Le garde-fou du numéro de document (ADR-014) subsiste et compare désormais des
+caractères **alphanumériques** : un NIN portant une lettre ne peut plus être déclaré
+fragment d'un numéro de carte purement numérique.
+
+### Normalisation en entrée
+
+`VisitorInput.nin` retire séparateurs et espaces et passe en majuscules. Sans cela,
+un NIN saisi à la main (`2 K05 2012 00108`) et le même NIN lu par l'OCR
+(`2K05201200108`) formeraient deux valeurs distinctes dans une colonne indexée et
+destinée à la recherche.

@@ -52,9 +52,6 @@ _CHECKER_BY_FORMAT = {
 # Pondération du calcul des chiffres de contrôle ICAO 9303.
 _CHECK_WEIGHTS = (7, 3, 1)
 
-# Le NIN sénégalais compte 13 chiffres (ex. imprimé « 1 895 2003 00511 »).
-_NIN_LENGTH = 13
-
 # Contrôles du rapport de la lib `mrz` que nous recalculons nous-mêmes : ils sont
 # exclus de l'évaluation structurelle pour ne pas être comptés deux fois.
 _RECOMPUTED_CHECKS = frozenset({"document number hash"})
@@ -327,14 +324,71 @@ _CONFUSIONS_VERS_CHIFFRE = str.maketrans(
     }
 )
 
-# Budget de lettres toléré sur une ligne non libellée : couvre un préfixe « N° »
-# sans laisser passer une ligne bavarde qui totaliserait 13 chiffres par hasard.
-_MAX_LETTRES_LIGNE_NUMERIQUE = 2
+# Structure du NIN sénégalais, 13 caractères une fois les séparateurs retirés :
+#
+#     2   K05   2012   00108
+#     │    │     │       └── numéro d'ordre séquentiel, 5 chiffres
+#     │    │     └────────── année d'enregistrement, 4 chiffres
+#     │    └──────────────── code d'état civil (commune de déclaration) : trois
+#     │                      caractères **alphanumériques**, une lettre y est fréquente
+#     └───────────────────── sexe : 1 (homme) ou 2 (femme)
+#
+# Valider bloc par bloc plutôt que « 13 chiffres » est ce qui permet d'accepter les
+# cartes dont le code d'état civil porte une lettre — perdues en silence jusqu'ici —
+# sans pour autant laisser passer n'importe quelle suite de 13 caractères.
+_NIN_LENGTH = 13
+_NIN_SEXES = frozenset("12")
+_NIN_ANNEE_MIN = 1900
+# Le code d'état civil observé est soit purement numérique (« 895 »), soit une lettre
+# suivie de deux chiffres (« K05 »). Au-delà d'une lettre, la fenêtre vient d'un mot
+# imprimé, pas d'un NIN.
+_NIN_MAX_LETTRES_ETAT_CIVIL = 1
+
+# Bruit toléré de part et d'autre du NIN : de quoi absorber un préfixe « N° » sans
+# offrir à une ligne bavarde treize caractères pris au hasard en son milieu.
+_NIN_BRUIT_MAX = 2
+
+# La barre verticale est conservée : elle occupe la position d'un `1` mal lu, que la
+# correction par bloc redressera. La retirer ici décalerait la fenêtre d'un cran.
+_HORS_CANDIDAT = re.compile(r"[^A-Z0-9|]")
 
 
-def _chiffres(texte: str) -> str:
-    """Suite des chiffres du texte, confusions OCR corrigées et séparateurs retirés."""
-    return re.sub(r"\D", "", texte.upper().translate(_CONFUSIONS_VERS_CHIFFRE))
+def _normaliser(texte: str) -> str:
+    """Majuscules, séparateurs et ponctuation retirés : les caractères, dans l'ordre."""
+    return _HORS_CANDIDAT.sub("", texte.upper())
+
+
+def _lire_nin(fenetre: str) -> str | None:
+    """Lit une fenêtre de 13 caractères comme un NIN, ou la rejette.
+
+    Les confusions OCR sont corrigées **bloc par bloc**, toujours vers le chiffre —
+    y compris sur le code d'état civil. Une lettre sans équivalent numérique (`K`)
+    y survit donc telle quelle, alors qu'un `S` lu pour un `5` est redressé.
+
+    Le prix de ce choix est connu : un code d'état civil commençant réellement par
+    `D`, `O` ou `S` serait numérisé à tort. Sans référentiel des communes, rien ne
+    départage ces deux lectures — on tranche pour la confusion OCR, de très loin la
+    plus fréquente.
+    """
+    sexe = fenetre[0].translate(_CONFUSIONS_VERS_CHIFFRE)
+    if sexe not in _NIN_SEXES:
+        return None
+
+    etat_civil = fenetre[1:4].translate(_CONFUSIONS_VERS_CHIFFRE)
+    if sum(c.isalpha() for c in etat_civil) > _NIN_MAX_LETTRES_ETAT_CIVIL:
+        return None
+
+    annee = fenetre[4:8].translate(_CONFUSIONS_VERS_CHIFFRE)
+    # Une année d'enregistrement est nécessairement passée : c'est ce contrôle qui
+    # écarte les fenêtres découpées au milieu d'un numéro de carte.
+    if not annee.isdigit() or not (_NIN_ANNEE_MIN <= int(annee) <= date.today().year):
+        return None
+
+    ordre = fenetre[8:_NIN_LENGTH].translate(_CONFUSIONS_VERS_CHIFFRE)
+    if not ordre.isdigit():
+        return None
+
+    return sexe + etat_civil + annee + ordre
 
 
 def est_ligne_mrz(ligne: str) -> bool:
@@ -366,16 +420,54 @@ def _appartient_au_numero_document(candidat: str, numero_document: str | None) -
     imprimé sur la même zone que le NIN. Tronqué par l'OCR, il peut tomber
     exactement à 13 chiffres et se faire passer pour un NIN — c'est le pire
     résultat possible, un identifiant faux mais crédible.
+
+    La comparaison porte sur les caractères alphanumériques et non sur les seuls
+    chiffres : un NIN dont le code d'état civil porte une lettre ne peut alors pas
+    être déclaré fragment d'un numéro de carte purement numérique.
     """
     if not numero_document:
         return False
-    document = re.sub(r"\D", "", numero_document)
+    document = _normaliser(numero_document)
     if not document:
         return False
     return candidat in document or document in candidat
 
 
-def _candidat_libelle(lignes: list[str], index: int) -> str | None:
+def _chercher_nin(
+    texte: str,
+    numero_document: str | None,
+    *,
+    bruit_avant: int,
+    bruit_apres: int | None,
+) -> str | None:
+    """Cherche un NIN dans `texte`, séparateurs retirés.
+
+    `bruit_avant` et `bruit_apres` bornent ce qui peut entourer la fenêtre retenue.
+    C'est ce bornage — plus que la structure des blocs — qui empêche un numéro de
+    carte de 17 chiffres d'offrir quelque part en son milieu treize caractères
+    structurellement valides. `bruit_apres=None` lève la borne de droite : après un
+    libellé `NIN`, la fin de la ligne porte souvent le numéro de carte, et c'est
+    précisément la position qui doit trancher.
+    """
+    normalise = _normaliser(texte)
+    dernier_debut = min(bruit_avant, len(normalise) - _NIN_LENGTH)
+
+    for debut in range(dernier_debut + 1):
+        fin = debut + _NIN_LENGTH
+        if bruit_apres is not None and len(normalise) - fin > bruit_apres:
+            continue
+        candidat = _lire_nin(normalise[debut:fin])
+        # Un fragment du numéro de carte n'interrompt pas la recherche : la fenêtre
+        # suivante peut porter le vrai NIN.
+        if candidat and not _appartient_au_numero_document(candidat, numero_document):
+            return candidat
+
+    return None
+
+
+def _candidat_libelle(
+    lignes: list[str], index: int, numero_document: str | None
+) -> str | None:
     """Cherche un NIN annoncé par son libellé, sur la ligne ou sur la suivante.
 
     L'OCR sépare régulièrement le libellé de ses chiffres en deux lignes : on
@@ -389,18 +481,14 @@ def _candidat_libelle(lignes: list[str], index: int) -> str | None:
     if correspondance is None:
         return None
 
-    # Les 13 premiers chiffres **après** le libellé : sur une ligne portant à la
+    # La recherche démarre juste **après** le libellé : sur une ligne portant à la
     # fois le NIN et le numéro de carte, l'ordre d'impression tranche.
-    suite = _chiffres(texte[correspondance.end() :])
-    return suite[:_NIN_LENGTH] if len(suite) >= _NIN_LENGTH else None
-
-
-def _candidat_numerique(ligne: str) -> str | None:
-    """Ligne quasi exclusivement numérique, sans libellé."""
-    if sum(c.isalpha() for c in ligne) > _MAX_LETTRES_LIGNE_NUMERIQUE:
-        return None
-    chiffres = _chiffres(ligne)
-    return chiffres if len(chiffres) == _NIN_LENGTH else None
+    return _chercher_nin(
+        texte[correspondance.end() :],
+        numero_document,
+        bruit_avant=_NIN_BRUIT_MAX,
+        bruit_apres=None,
+    )
 
 
 def extract_nin(ocr_lines: list[str], numero_document: str | None = None) -> str | None:
@@ -411,12 +499,16 @@ def extract_nin(ocr_lines: list[str], numero_document: str | None = None) -> str
     juste au-dessus de la bande MRZ, sous la forme `NIN 1 895 2003 00511`, et tombe
     donc dans la même passe OCR.
 
+    Le NIN n'est **pas** une suite de 13 chiffres : son code d'état civil peut
+    porter une lettre (« 2 K05 2012 00108 »). Chaque candidat est donc lu bloc par
+    bloc par `_lire_nin`, jamais compté en chiffres.
+
     Deux stratégies, la libellée primant sur la structurelle :
 
-    1. un libellé `NIN` (ou `N.I.N`, `identification nationale`), suivi de 13
-       chiffres — éventuellement sur la ligne suivante ;
-    2. à défaut, une ligne réduite à 13 chiffres, deux lettres tolérées pour
-       absorber un préfixe « N° ».
+    1. un libellé `NIN` (ou `N.I.N`, `identification nationale`), suivi du numéro —
+       éventuellement sur la ligne suivante ;
+    2. à défaut, une ligne qui se réduit au NIN, à deux caractères près de part et
+       d'autre pour absorber un préfixe « N° ».
 
     `numero_document`, quand il est fourni, sert de garde-fou : un candidat qui
     n'est qu'un fragment du numéro de carte est rejeté. Sans lui, un numéro de
@@ -425,13 +517,15 @@ def extract_nin(ocr_lines: list[str], numero_document: str | None = None) -> str
     lignes = [ligne for ligne in ocr_lines if not est_ligne_mrz(ligne)]
 
     for index in range(len(lignes)):
-        candidat = _candidat_libelle(lignes, index)
-        if candidat and not _appartient_au_numero_document(candidat, numero_document):
+        candidat = _candidat_libelle(lignes, index, numero_document)
+        if candidat:
             return candidat
 
     for ligne in lignes:
-        candidat = _candidat_numerique(ligne)
-        if candidat and not _appartient_au_numero_document(candidat, numero_document):
+        candidat = _chercher_nin(
+            ligne, numero_document, bruit_avant=_NIN_BRUIT_MAX, bruit_apres=_NIN_BRUIT_MAX
+        )
+        if candidat:
             return candidat
 
     return None

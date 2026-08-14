@@ -266,9 +266,19 @@ class TestNinJamaisConfonduAvecLeNumeroDeCarte:
         lignes = ["CARTE 1 0120030 2010 00558 NIN 1 895 2003 00511"]
         assert extract_nin(lignes, self.NUMERO_CARTE) == "1895200300511"
 
-    def test_sans_numero_de_document_le_garde_fou_est_inactif(self):
-        """Rétro-compatibilité : l'argument est optionnel."""
-        assert extract_nin(["1012003020100"]) == "1012003020100"
+    def test_sans_numero_de_document_la_structure_prend_le_relais(self):
+        """L'argument reste optionnel, et le numéro tronqué est désormais rejeté seul.
+
+        « 1012003020100 » annonce l'année « 0030 » : aucune lecture par blocs ne
+        tient. La validation structurelle rend le garde-fou moins déterminant qu'il
+        ne l'était, sans le rendre inutile.
+        """
+        assert extract_nin(["1012003020100"]) is None
+        assert extract_nin(["1 895 2003 00511"]) == "1895200300511"
+
+    def test_le_numero_de_carte_complet_est_rejete_sans_garde_fou(self):
+        """Ses 17 chiffres débordent du bruit toléré autour d'un NIN."""
+        assert extract_nin(["1 0120030 2010 00558"]) is None
 
     def test_le_champ_nin_de_la_reponse_ne_reprend_jamais_le_numero_document(self):
         """Contrôle de bout en bout, sur le parcours réellement emprunté."""
@@ -305,6 +315,10 @@ class TestRobustesseDeLExtractionDuNin:
         # S lu pour 5, O lu pour 0 — les deux confusions les plus fréquentes.
         assert extract_nin(["NIN 1 89S 2003 0O511"]) == self.NIN
 
+    def test_barre_verticale_lue_pour_un_1(self):
+        """Elle occupe la position d'un chiffre : la retirer décalerait la fenêtre."""
+        assert extract_nin(["NIN | 895 2003 005||"]) == "1895200300511"
+
     def test_les_lignes_mrz_sont_ecartees_de_la_recherche(self):
         """Corriger les confusions sur un MRZ produirait un faux NIN très crédible.
 
@@ -319,6 +333,61 @@ class TestRobustesseDeLExtractionDuNin:
             "CARTE NATIONALE D'IDENTITE",
             "NIN1 895 2003 00511",
             "na",
+            *CNI_SEN_LINES,
+        ]
+        assert extract_nin(lignes, CNI_SEN_NUMERO) == self.NIN
+
+
+class TestNinAlphanumerique:
+    """Le code d'état civil du NIN peut porter une lettre : « 2 K05 2012 00108 ».
+
+    Observé sur une carte réelle. La lecture en « 13 chiffres » perdait ces NIN en
+    silence : la lettre était supprimée, il ne restait que 12 chiffres.
+    """
+
+    NIN = "2K05201200108"
+
+    def test_lettre_dans_le_code_etat_civil(self):
+        assert extract_nin(["NIN 2 K05 2012 00108"]) == self.NIN
+
+    def test_sans_libelle(self):
+        assert extract_nin(["2 K05 2012 00108"]) == self.NIN
+
+    def test_prefixe_numero_sans_libelle(self):
+        assert extract_nin(["N° 2 K05 2012 00108"]) == self.NIN
+
+    def test_la_lettre_survit_aux_corrections_ocr(self):
+        """`K` n'a pas d'équivalent numérique : les confusions ne le touchent pas."""
+        assert extract_nin(["NIN 2 K05 2O12 0O1O8"]) == self.NIN
+
+    def test_le_garde_fou_du_numero_de_carte_reste_actif(self):
+        assert extract_nin(["NIN 2 K05 2012 00108"], "10120030201000558") == self.NIN
+
+    def test_deux_lettres_dans_le_code_etat_civil_sont_rejetees(self):
+        """Au-delà d'une lettre, la fenêtre vient d'un mot imprimé, pas d'un NIN."""
+        assert extract_nin(["NIN 2 KM5 2012 00108"]) is None
+
+    def test_sexe_hors_1_ou_2_rejete(self):
+        assert extract_nin(["NIN 7 K05 2012 00108"]) is None
+
+    def test_annee_invraisemblable_rejetee(self):
+        assert extract_nin(["NIN 2 K05 3012 00108"]) is None
+
+    def test_une_lettre_ambigue_est_redressee_en_chiffre(self):
+        """Limitation assumée, documentée à l'ADR-016.
+
+        Un `D` réellement imprimé dans le code d'état civil est indiscernable d'un
+        `0` mal lu. Sans référentiel des communes, on tranche pour la confusion OCR,
+        de très loin le cas le plus fréquent.
+        """
+        assert extract_nin(["NIN 2 D05 2012 00108"]) == "2005201200108"
+
+    def test_sortie_ocr_complete(self):
+        lignes = [
+            "REPUBLIQUE DU SENEGAL",
+            "INFORMATIONS ELECTORALES",
+            "Departement RUFISQUE",
+            "NIN 2 K05 2012 00108",
             *CNI_SEN_LINES,
         ]
         assert extract_nin(lignes, CNI_SEN_NUMERO) == self.NIN

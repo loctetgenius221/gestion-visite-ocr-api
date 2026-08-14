@@ -112,6 +112,22 @@ class TestCreateVisit:
         assert visiteur["numero_document"] == "10120010718000254"
         assert visiteur["nin"] == "1990201700669"
 
+    async def test_nin_saisi_par_blocs_est_normalise(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        """Le NIN est imprimé par blocs et l'agent le recopie tel quel (ADR-016).
+
+        Sans normalisation, la saisie manuelle et la sortie OCR produiraient deux
+        valeurs distinctes pour la même personne, dans une colonne indexée.
+        """
+        payload = visit_payload(seeded)
+        payload["visitor"]["nin"] = "2 k05 2012 00108"
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 201
+        assert response.json()["visitor"]["nin"] == "2K05201200108"
+
     async def test_nin_absent_reste_nul(
         self, client: AsyncClient, seeded: dict, auth_headers: dict
     ):

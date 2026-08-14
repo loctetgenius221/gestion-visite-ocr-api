@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, model_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 from app.models.enums import DocumentType, Sexe, VisitStatus
 from app.schemas.auth import UserRead
@@ -24,7 +25,9 @@ class VisitorInput(BaseModel):
         max_length=30,
         description=(
             "Numéro d'Identification National. Absent du MRZ des CNI sénégalaises "
-            "(voir ADR-005) : à saisir manuellement depuis le verso de la carte."
+            "(ADR-005), il est lu par OCR sur la zone imprimée (ADR-014). "
+            "Alphanumérique : son code d'état civil peut porter une lettre, "
+            "« 2 K05 2012 00108 » (ADR-016). Séparateurs et espaces sont retirés."
         ),
     )
     nationalite: str | None = Field(default=None, max_length=60)
@@ -36,6 +39,20 @@ class VisitorInput(BaseModel):
     provenance: str | None = Field(default=None, max_length=200)
     immatriculation_vehicule: str | None = Field(default=None, max_length=40)
     mrz_image_url: str | None = Field(default=None, max_length=500)
+
+    @field_validator("nin", mode="after")
+    @classmethod
+    def _normaliser_nin(cls, valeur: str | None) -> str | None:
+        """Aligne la saisie manuelle sur la sortie OCR : majuscules, sans séparateurs.
+
+        Le NIN est imprimé par blocs (« 2 K05 2012 00108 ») et l'agent le recopie
+        souvent tel quel, là où l'OCR renvoie une suite compacte. Sans cette
+        normalisation, la même personne porterait deux valeurs différentes dans une
+        colonne indexée et destinée à la recherche.
+        """
+        if valeur is None:
+            return None
+        return re.sub(r"[^A-Z0-9]", "", valeur.upper()) or None
 
 
 class VisitorRead(ORMModel):
