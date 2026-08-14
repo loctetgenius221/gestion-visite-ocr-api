@@ -43,6 +43,18 @@ class SystemSettingsRead(BaseModel):
         description="Garde-fou : nombre de lignes au-delà duquel un export est refusé.",
     )
 
+    document_images_retention_days: int = Field(
+        default=365,
+        ge=0,
+        le=3650,
+        description=(
+            "Durée de conservation des photos de pièces d'identité, comptée depuis "
+            "la dernière visite du visiteur. `0` désactive la purge. Les visites "
+            "restent au registre : seules les images sont supprimées. Appliqué par "
+            "`python -m app.purge_documents`, jamais automatiquement."
+        ),
+    )
+
     updated_at: datetime | None = Field(
         default=None, description="Dernière modification d'un paramètre, tous paramètres confondus."
     )
@@ -55,3 +67,4 @@ class SystemSettingsUpdate(BaseModel):
     max_failed_login_attempts: int | None = Field(default=None, ge=3, le=20)
     account_lockout_minutes: int | None = Field(default=None, ge=1, le=1440)
     visits_export_max_rows: int | None = Field(default=None, ge=100, le=500_000)
+    document_images_retention_days: int | None = Field(default=None, ge=0, le=3650)

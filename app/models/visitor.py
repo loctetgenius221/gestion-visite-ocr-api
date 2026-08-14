@@ -39,7 +39,16 @@ class Visitor(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     email: Mapped[str | None] = mapped_column(String(255), nullable=True)
     provenance: Mapped[str | None] = mapped_column(String(200), nullable=True)
     immatriculation_vehicule: Mapped[str | None] = mapped_column(String(40), nullable=True)
-    # Conservée pour audit : chemin relatif de l'image MRZ scannée.
+    # Images de la pièce, conservées pour audit (ADR-018).
+    #
+    # Le scan MRZ ne capture que la face portant le MRZ — le verso d'une CNI. En
+    # saisie manuelle, quand l'OCR échoue, l'agent photographie les deux faces :
+    # le recto porte la photo et les mentions que le verso n'a pas.
+    document_recto_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    document_verso_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # Déprécié au profit de `document_verso_url`, qui désigne la même face. Conservé
+    # en écriture le temps que l'app mobile bascule : le retirer maintenant casserait
+    # toutes les tablettes déjà déployées.
     mrz_image_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
 
     def __repr__(self) -> str:  # pragma: no cover - aide au debug uniquement

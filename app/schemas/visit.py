@@ -38,7 +38,40 @@ class VisitorInput(BaseModel):
     email: EmailStr | None = None
     provenance: str | None = Field(default=None, max_length=200)
     immatriculation_vehicule: str | None = Field(default=None, max_length=40)
-    mrz_image_url: str | None = Field(default=None, max_length=500)
+    document_recto_url: str | None = Field(
+        default=None,
+        max_length=500,
+        description=(
+            "Photo du recto, déposée via `POST /uploads/document?face=recto`. "
+            "Utile en saisie manuelle : le scan MRZ ne capture que le verso."
+        ),
+    )
+    document_verso_url: str | None = Field(
+        default=None,
+        max_length=500,
+        description="Photo du verso — la face portant le MRZ sur une CNI.",
+    )
+    mrz_image_url: str | None = Field(
+        default=None,
+        max_length=500,
+        deprecated="Utilisez `document_verso_url`, qui désigne la même face.",
+        description=(
+            "Déprécié. Conservé le temps que l'app mobile bascule : à défaut de "
+            "`document_verso_url`, cette valeur y est reportée."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _reporter_image_mrz(self) -> VisitorInput:
+        """`mrz_image_url` alimente `document_verso_url` : c'est la même face.
+
+        Sans ce report, un client resté sur l'ancien champ verrait le verso
+        disparaître de la nouvelle colonne — et la purge des images (ADR-018)
+        raisonnerait sur une donnée incomplète.
+        """
+        if self.document_verso_url is None and self.mrz_image_url is not None:
+            self.document_verso_url = self.mrz_image_url
+        return self
 
     @field_validator("nin", mode="after")
     @classmethod
@@ -90,6 +123,8 @@ class VisitorRead(ORMModel):
     email: str | None = None
     provenance: str | None = None
     immatriculation_vehicule: str | None = None
+    document_recto_url: str | None = None
+    document_verso_url: str | None = None
     mrz_image_url: str | None = None
 
 

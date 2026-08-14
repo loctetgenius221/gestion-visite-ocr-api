@@ -1,0 +1,23 @@
+# Déclenchement hebdomadaire de la purge des photos de pièces d'identité.
+#
+#   sudo systemctl enable --now sigv-purge-documents.timer
+#   systemctl list-timers sigv-purge-documents.timer   # prochaine exécution
+#   journalctl -u sigv-purge-documents                 # résultat des exécutions
+#
+# Hebdomadaire et non quotidien : la conservation se compte en centaines de jours,
+# un passage par semaine suffit largement et laisse le temps de voir un échec.
+
+[Unit]
+Description=SIGV — purge hebdomadaire des photos de pièces d'identité
+
+[Timer]
+# Lundi 03h00, hors des heures d'ouverture du poste d'accueil.
+OnCalendar=Mon *-*-* 03:00:00
+# Rattrape l'exécution si la machine était éteinte à l'heure prévue.
+Persistent=true
+# Étale le déclenchement : sans cela, plusieurs installations tomberaient à la
+# même seconde sur une base partagée.
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

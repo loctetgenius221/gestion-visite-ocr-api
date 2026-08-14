@@ -15,6 +15,10 @@ from app.models.visit import Visit
 from app.models.visitor import Visitor
 from app.schemas.visit import VisitFilters
 
+# Colonnes de `Visitor` portant une photo de pièce d'identité. Les signatures n'en
+# font pas partie : elles attestent du passage lui-même et appartiennent au registre.
+COLONNES_IMAGES_DOCUMENT = ("document_recto_url", "document_verso_url", "mrz_image_url")
+
 
 class VisitorRepository:
     def __init__(self, session: AsyncSession) -> None:
@@ -37,6 +41,33 @@ class VisitorRepository:
         self.session.add(visitor)
         await self.session.flush()
         return visitor
+
+    async def list_documents_expires(
+        self, avant: datetime, *, limit: int, offset: int = 0
+    ) -> list[Visitor]:
+        """Visiteurs dont les images de pièce ont dépassé la durée de conservation.
+
+        La date de référence est la **dernière visite**, pas la date de la photo :
+        une personne qui revient chaque mois garde ses images, quelqu'un qui n'est
+        plus venu depuis deux ans les perd. À défaut de visite — cas transitoire —
+        la création de la fiche fait foi.
+
+        Les visites annulées comptent : elles attestent quand même d'un passage au
+        poste, et retenir l'hypothèse la plus prudente évite d'effacer une pièce
+        justificative encore utile.
+        """
+        reference = func.coalesce(func.max(Visit.checked_in_at), Visitor.created_at)
+        stmt = (
+            select(Visitor)
+            .outerjoin(Visit, Visit.visitor_id == Visitor.id)
+            .where(or_(*(getattr(Visitor, c).is_not(None) for c in COLONNES_IMAGES_DOCUMENT)))
+            .group_by(Visitor.id)
+            .having(reference < avant)
+            .order_by(Visitor.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
 
     @staticmethod
     def _clause_recherche(terme: str) -> ColumnElement[bool]:

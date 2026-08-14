@@ -679,3 +679,75 @@ d'accueil en a besoin. Trois garde-fous :
    rendrait illisible pour ce qu'il sert vraiment, les écritures. En revanche
    `visit.created` porte désormais `visiteur_reutilise`, qui dit si la visite a été
    enregistrée **sans rescan** de la pièce.
+
+---
+
+## ADR-018 — Photos recto et verso, et durée de vie des images de pièces
+
+**Contexte.** Le scan MRZ ne lit qu'une face : le **verso** d'une CNI sénégalaise,
+celle qui porte la bande MRZ. C'est suffisant quand l'OCR réussit. Quand il échoue,
+l'agent saisit l'identité à la main — et il n'avait alors **aucun moyen de déposer
+une photo de la pièce** : `/uploads/signature` était le seul endroit où poser un
+fichier. La seule justification de ce qui venait d'être saisi à la main manquait.
+
+### Deux colonnes, un endpoint
+
+| Ajout | Rôle |
+|---|---|
+| `POST /uploads/document?face=recto\|verso` | Dépose une face, renvoie son URL |
+| `Visitor.document_recto_url` / `document_verso_url` | Portent ces URLs |
+
+Le recto n'est pas un doublon du verso : il porte la photo du titulaire et des
+mentions absentes de l'autre face. Sans lui, une identité saisie à la main ne
+s'appuie sur rien de vérifiable.
+
+Les faces sont rangées séparément (`documents/recto/`, `documents/verso/`) : la
+purge et toute inspection ultérieure y gagnent, pour un coût nul.
+
+### `mrz_image_url` reste, et alimente `document_verso_url`
+
+L'ancienne colonne désigne exactement la même face que `document_verso_url`. La
+migration `b4e2af8c1d93` recopie les valeurs existantes, et `VisitorInput` **reporte**
+la valeur reçue sur le nouveau champ quand celui-ci est absent.
+
+Elle n'est pas supprimée : les tablettes déjà déployées l'envoient. Sans ce report,
+un client resté sur l'ancien champ verrait le verso disparaître de la nouvelle
+colonne — et la purge raisonnerait sur une donnée incomplète. À retirer une fois
+l'app mobile basculée.
+
+### Conservation : un réglage et une commande, pas une tâche de fond
+
+Une photo de CNI identifie complètement une personne. La conserver indéfiniment n'a
+aucune justification métier passé un délai — et c'est le premier point qu'une
+autorité de protection des données regarde.
+
+| Élément | Choix |
+|---|---|
+| Durée | `document_images_retention_days`, 365 jours par défaut, `0` désactive |
+| Référence | La **dernière visite** du visiteur, pas la date de la photo |
+| Déclenchement | `python -m app.purge_documents`, sur timer systemd |
+| Portée | Les images **seules** |
+
+**La date de référence est la dernière venue** : quelqu'un qui revient chaque mois
+garde ses images, quelqu'un qui n'est plus venu depuis deux ans les perd. Compter
+depuis la date de la photo effacerait la pièce d'un visiteur régulier.
+
+**Seules les images partent.** Visiteurs, visites et journal d'audit survivent : le
+registre doit pouvoir dire qui est venu, quand et voir qui, des années après que la
+photo a été effacée. Les signatures ne sont pas purgées non plus — elles attestent
+du passage lui-même et appartiennent au registre, pas à la pièce d'identité.
+
+**Pourquoi pas une tâche de fond interne.** Elle s'exécuterait une fois par worker
+uvicorn, et son échec ne serait visible de personne. Un timer systemd laisse une
+trace dans journald, se teste à la main (`--dry-run`) et se désactive sans
+redéploiement — cohérent avec le déploiement natif déjà en place. Chaque exécution
+écrit en plus une entrée `visitor.documents_purged` au journal d'audit : une
+suppression de données doit rester défendable après coup.
+
+### Ce que ça ne règle pas
+
+Nginx sert `/storage/uploads/` **sans authentification** (voir DEPLOYMENT.md §8) :
+les noms de fichiers sont des UUID v4 non devinables, mais quiconque obtient une URL
+accède à l'image. Doubler le volume d'images de pièces double d'autant l'exposition.
+Le passage à `X-Accel-Redirect` derrière le bearer token devient plus urgent qu'il
+ne l'était — c'est un changement de contrat côté client, à planifier.

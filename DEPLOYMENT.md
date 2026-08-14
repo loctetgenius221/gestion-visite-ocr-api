@@ -133,6 +133,35 @@ journalctl -u sigv-api -f          # logs JSON de l'application
 Le service joue `alembic upgrade head` avant chaque démarrage : le schéma suit
 toujours le code déployé.
 
+### Purge des photos de pièces d'identité
+
+Les images de CNI sont la donnée la plus sensible de l'installation. Elles ne sont
+**pas** supprimées automatiquement par l'application : un timer les efface passé
+leur durée de conservation (ADR-018).
+
+Mesurez d'abord ce qui serait supprimé — la commande ne touche à rien :
+
+```bash
+sudo -u sigv /home/sigv/sigv-backend/.venv/bin/python -m app.purge_documents --dry-run
+```
+
+Puis activez le timer :
+
+```bash
+cp /home/sigv/sigv-backend/deploy/systemd/sigv-purge-documents.service /etc/systemd/system/
+cp /home/sigv/sigv-backend/deploy/systemd/sigv-purge-documents.timer   /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now sigv-purge-documents.timer
+
+systemctl list-timers sigv-purge-documents.timer   # prochaine exécution
+journalctl -u sigv-purge-documents                 # résultat des exécutions
+```
+
+La durée est le paramètre système `document_images_retention_days` — 365 jours par
+défaut, `0` désactive la purge — modifiable depuis le dashboard sans redéploiement.
+Seules les **images** partent : visites, visiteurs et journal d'audit restent
+intacts, et chaque exécution laisse une trace `visitor.documents_purged`.
+
 ---
 
 ## 5. Nginx

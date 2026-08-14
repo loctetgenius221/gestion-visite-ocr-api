@@ -1,0 +1,43 @@
+# Purge des photos de pièces d'identité arrivées au terme de leur conservation.
+#
+#   sudo cp deploy/systemd/sigv-purge-documents.service /etc/systemd/system/
+#   sudo cp deploy/systemd/sigv-purge-documents.timer   /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sigv-purge-documents.timer
+#
+# Avant de l'activer, mesurez ce qu'elle supprimerait :
+#
+#   sudo -u sigv /home/sigv/sigv-backend/.venv/bin/python -m app.purge_documents --dry-run
+#
+# La durée de conservation est le paramètre système `document_images_retention_days`
+# (365 jours par défaut, `0` désactive la purge), modifiable depuis le dashboard.
+# Seules les images sont supprimées : le registre des visites reste complet.
+#
+# Adaptez les chemins si l'application n'est pas installée dans /home/sigv/sigv-backend.
+
+[Unit]
+Description=SIGV — purge des photos de pièces d'identité
+Documentation=file:///home/sigv/sigv-backend/DEPLOYMENT.md
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=sigv
+Group=sigv
+WorkingDirectory=/home/sigv/sigv-backend
+EnvironmentFile=/home/sigv/sigv-backend/.env
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+ExecStart=/home/sigv/sigv-backend/.venv/bin/python -m app.purge_documents
+
+# --- Durcissement, aligné sur sigv-api.service ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# La purge supprime des fichiers déposés : c'est le seul chemin qu'elle écrit.
+ReadWritePaths=/home/sigv/sigv-backend/storage
