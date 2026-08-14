@@ -68,6 +68,17 @@ def get_pagination(
 async def create_visit(
     payload: VisitCreate, service: VisitServiceDep, current_user: CurrentUser
 ) -> VisitRead:
+    """L'identité arrive par `visitor` **ou** par `visitor_id`, jamais les deux.
+
+    - `visitor` : identité complète, issue du scan MRZ ou saisie par l'agent.
+    - `visitor_id` : fiche retrouvée via `GET /visitors` — la personne revient et
+      n'a pas à faire rescanner sa pièce (ADR-017). `visitor_passage` rafraîchit
+      alors ce qui change d'une venue à l'autre (téléphone, provenance, véhicule).
+
+    Un visiteur déjà `PRESENT` ne peut pas entrer une seconde fois : la réponse est
+    un `409 VISITOR_ALREADY_PRESENT` portant la visite ouverte et son heure d'entrée,
+    de quoi proposer la clôture.
+    """
     visit = await service.create_visit(payload, current_user)
     return VisitRead.model_validate(visit)
 

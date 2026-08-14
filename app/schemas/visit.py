@@ -55,6 +55,26 @@ class VisitorInput(BaseModel):
         return re.sub(r"[^A-Z0-9]", "", valeur.upper()) or None
 
 
+class VisitorPassageInput(BaseModel):
+    """Ce qui change d'un passage à l'autre, pour un visiteur déjà connu.
+
+    Ces trois informations vivent sur la fiche visiteur (voir ADR-010) alors
+    qu'elles appartiennent au passage : la plaque du véhicule d'il y a trois mois
+    n'a rien à voir avec celle du jour. Les recopier telles quelles en reprenant une
+    fiche connue produirait une donnée fausse — d'où ce bloc de mise à jour, qui
+    rafraîchit la fiche au moment de l'enregistrement.
+
+    Limite assumée : la fiche ne garde que la dernière valeur, l'historique par
+    visite n'est pas reconstituable (ADR-017).
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    telephone: str | None = Field(default=None, max_length=40)
+    provenance: str | None = Field(default=None, max_length=200)
+    immatriculation_vehicule: str | None = Field(default=None, max_length=40)
+
+
 class VisitorRead(ORMModel):
     id: uuid.UUID
     prenom: str
@@ -73,12 +93,37 @@ class VisitorRead(ORMModel):
     mrz_image_url: str | None = None
 
 
+class VisitorSearchResult(VisitorRead):
+    """Fiche connue, renvoyée par la recherche de visiteurs.
+
+    Les deux champs ajoutés évitent un aller-retour : le client affiche la dernière
+    venue, et propose la clôture au lieu de se heurter à un `VISITOR_ALREADY_PRESENT`
+    en enregistrant une personne déjà présente.
+    """
+
+    derniere_visite_at: datetime | None = Field(
+        default=None, description="Entrée de la dernière visite non annulée."
+    )
+    visite_ouverte_id: uuid.UUID | None = Field(
+        default=None, description="Visite encore `PRESENT`, s'il y en a une."
+    )
+
+
 class VisitCreate(BaseModel):
-    """Payload de création d'une visite complète (visiteur + contexte)."""
+    """Payload de création d'une visite complète (visiteur + contexte).
+
+    L'identité arrive de deux façons, exclusives l'une de l'autre :
+
+    - `visitor` : identité complète, issue du scan MRZ ou saisie par l'agent ;
+    - `visitor_id` : fiche déjà connue, pour une personne qui revient — sans
+      rescanner sa pièce. `visitor_passage` rafraîchit alors ce qui a changé.
+    """
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
-    visitor: VisitorInput
+    visitor: VisitorInput | None = None
+    visitor_id: uuid.UUID | None = None
+    visitor_passage: VisitorPassageInput | None = None
     service_id: uuid.UUID
     agent_id: uuid.UUID
     purpose_id: uuid.UUID | None = None
@@ -89,6 +134,26 @@ class VisitCreate(BaseModel):
     checked_in_at: datetime | None = None
     # Clé d'idempotence pour la synchronisation batch (voir ADR-004).
     client_reference: str | None = Field(default=None, max_length=100)
+
+    @model_validator(mode="after")
+    def _identite_requise(self) -> VisitCreate:
+        """Exactement une source d'identité, jamais deux.
+
+        Accepter les deux obligerait à trancher un désaccord entre la fiche
+        référencée et l'identité fournie — un arbitrage qu'aucune règle ne rend
+        évident, et qui se solderait par une identité erronée au registre.
+        """
+        if (self.visitor is None) == (self.visitor_id is None):
+            raise ValueError(
+                "Renseignez `visitor` (identité scannée ou saisie) ou `visitor_id` "
+                "(visiteur déjà connu), mais pas les deux."
+            )
+        if self.visitor_passage is not None and self.visitor is not None:
+            raise ValueError(
+                "`visitor_passage` accompagne `visitor_id`. Avec `visitor`, ces "
+                "champs se renseignent directement dans le bloc `visitor`."
+            )
+        return self
 
     @model_validator(mode="after")
     def _motif_requis(self) -> VisitCreate:

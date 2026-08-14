@@ -88,6 +88,12 @@ class TestCreateVisit:
         self, client: AsyncClient, seeded: dict, auth_headers: dict
     ):
         premier = await client.post("/visits", json=visit_payload(seeded), headers=auth_headers)
+        # La première visite doit être close : une personne ne peut pas entrer deux
+        # fois sans être sortie (ADR-017).
+        await client.put(
+            f"/visits/{premier.json()['id']}/checkout", headers=auth_headers
+        )
+
         payload = visit_payload(seeded)
         payload["visitor"]["telephone"] = "+221781111111"
         second = await client.post("/visits", json=payload, headers=auth_headers)
@@ -139,6 +145,138 @@ class TestCreateVisit:
     async def test_sans_authentification_renvoie_401(self, client: AsyncClient, seeded: dict):
         response = await client.post("/visits", json=visit_payload(seeded))
         assert response.status_code == 401
+
+
+class TestVisiteurDejaPresent:
+    """Une personne ne peut pas être présente deux fois (ADR-017)."""
+
+    async def test_seconde_entree_refusee_avec_la_visite_ouverte(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        premier = await client.post("/visits", json=visit_payload(seeded), headers=auth_headers)
+
+        second = await client.post("/visits", json=visit_payload(seeded), headers=auth_headers)
+
+        assert second.status_code == 409
+        body = second.json()
+        assert body["error_code"] == "VISITOR_ALREADY_PRESENT"
+        # Le client doit pouvoir proposer la clôture sans redemander la visite.
+        assert body["details"]["visit_id"] == premier.json()["id"]
+        assert body["details"]["checked_in_at"] is not None
+
+    async def test_apres_cloture_le_reenregistrement_passe(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        premier = await client.post("/visits", json=visit_payload(seeded), headers=auth_headers)
+        await client.put(f"/visits/{premier.json()['id']}/checkout", headers=auth_headers)
+
+        second = await client.post("/visits", json=visit_payload(seeded), headers=auth_headers)
+
+        assert second.status_code == 201
+
+    async def test_une_visite_annulee_ne_bloque_pas(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict, admin_headers: dict
+    ):
+        """Une visite annulée est une erreur de saisie : elle ne retient personne."""
+        premier = await client.post("/visits", json=visit_payload(seeded), headers=auth_headers)
+        await client.post(
+            f"/visits/{premier.json()['id']}/cancel",
+            json={"reason": "Saisie erronée"},
+            headers=admin_headers,
+        )
+
+        second = await client.post("/visits", json=visit_payload(seeded), headers=auth_headers)
+
+        assert second.status_code == 201
+
+
+class TestCreateVisitDepuisFicheConnue:
+    """Enregistrer une personne déjà venue, sans rescanner sa pièce (ADR-017)."""
+
+    @staticmethod
+    async def _fiche_connue(client: AsyncClient, seeded: dict, auth_headers: dict) -> str:
+        """Crée une visite, la clôture, et renvoie l'id du visiteur laissé en base."""
+        created = await client.post("/visits", json=visit_payload(seeded), headers=auth_headers)
+        await client.put(f"/visits/{created.json()['id']}/checkout", headers=auth_headers)
+        return created.json()["visitor"]["id"]
+
+    async def test_visitor_id_suffit_a_enregistrer_une_visite(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        visitor_id = await self._fiche_connue(client, seeded, auth_headers)
+        payload = visit_payload(seeded)
+        del payload["visitor"]
+        payload["visitor_id"] = visitor_id
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["visitor"]["id"] == visitor_id
+        # L'identité vient de la fiche, pas du payload : rien n'a été rescanné.
+        assert body["visitor"]["nom"] == "Diop"
+        assert body["visitor"]["numero_document"] == "1234567890123"
+
+    async def test_visitor_passage_rafraichit_la_fiche(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        visitor_id = await self._fiche_connue(client, seeded, auth_headers)
+        payload = visit_payload(seeded)
+        del payload["visitor"]
+        payload["visitor_id"] = visitor_id
+        payload["visitor_passage"] = {"immatriculation_vehicule": "DK-4242-AB"}
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 201
+        visiteur = response.json()["visitor"]
+        assert visiteur["immatriculation_vehicule"] == "DK-4242-AB"
+        # Un champ omis ne doit pas effacer une valeur connue.
+        assert visiteur["telephone"] == "+221770000000"
+
+    async def test_visitor_id_inconnu_renvoie_404(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        payload = visit_payload(seeded)
+        del payload["visitor"]
+        payload["visitor_id"] = str(uuid.uuid4())
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 404
+        assert response.json()["error_code"] == "VISITOR_NOT_FOUND"
+
+    async def test_les_deux_sources_didentite_ensemble_sont_refusees(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        payload = visit_payload(seeded, visitor_id=str(uuid.uuid4()))
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+
+    async def test_aucune_source_didentite_est_refusee(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        payload = visit_payload(seeded)
+        del payload["visitor"]
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+
+    async def test_visitor_passage_avec_identite_complete_est_refuse(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        """Deux sources pour le même champ : le bloc `visitor` fait déjà le travail."""
+        payload = visit_payload(seeded, visitor_passage={"telephone": "+221781111111"})
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
 
 
 class TestGetVisit:

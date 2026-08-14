@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Select, func, or_, select
+from sqlalchemy import ColumnElement, Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from app.models.enums import DocumentType, VisitStatus
 from app.models.referentiel import Agent, Purpose, Service
@@ -28,10 +30,82 @@ class VisitorRepository:
         )
         return (await self.session.execute(stmt)).scalars().first()
 
+    async def get_by_id(self, visitor_id: uuid.UUID) -> Visitor | None:
+        return await self.session.get(Visitor, visitor_id)
+
     async def add(self, visitor: Visitor) -> Visitor:
         self.session.add(visitor)
         await self.session.flush()
         return visitor
+
+    @staticmethod
+    def _clause_recherche(terme: str) -> ColumnElement[bool]:
+        """Recherche sur l'identité et sur les numéros.
+
+        Les numéros sont comparés **compactés** : le NIN et le numéro de carte sont
+        imprimés par blocs (« 2 K05 2012 00108 ») et l'agent les recopie avec leurs
+        espaces, alors que la base les stocke sans séparateurs (ADR-016).
+        """
+        motif = f"%{terme.strip().lower()}%"
+        clauses = [
+            func.lower(Visitor.nom).like(motif),
+            func.lower(Visitor.prenom).like(motif),
+        ]
+
+        compacte = re.sub(r"[^a-z0-9]", "", terme.lower())
+        # Un terme réduit à de la ponctuation donnerait `%%`, qui remonterait tout
+        # le fichier des visiteurs.
+        if compacte:
+            clauses.append(func.lower(Visitor.numero_document).like(f"%{compacte}%"))
+            clauses.append(func.lower(Visitor.nin).like(f"%{compacte}%"))
+
+        return or_(*clauses)
+
+    async def count_search(self, terme: str) -> int:
+        stmt = select(func.count(Visitor.id)).where(self._clause_recherche(terme))
+        return (await self.session.execute(stmt)).scalar_one()
+
+    async def search(
+        self, terme: str, *, limit: int, offset: int
+    ) -> list[tuple[Visitor, datetime | None, uuid.UUID | None]]:
+        """Fiches correspondantes, avec dernière venue et visite ouverte éventuelle.
+
+        Les deux informations sont ramenées **dans la même requête** : les calculer
+        fiche par fiche côté service produirait un N+1 sur une route appelée à
+        chaque frappe de l'agent.
+
+        Les visites annulées sont exclues de la dernière venue — une visite annulée
+        est une erreur de saisie, l'afficher comme un passage induirait en erreur.
+        """
+        ouverte = aliased(Visit)
+        visite_ouverte_id = (
+            select(ouverte.id)
+            .where(ouverte.visitor_id == Visitor.id, ouverte.statut == VisitStatus.PRESENT)
+            .order_by(ouverte.checked_in_at.desc())
+            .limit(1)
+            .correlate(Visitor)
+            .scalar_subquery()
+        )
+        derniere_visite_at = func.max(Visit.checked_in_at)
+
+        stmt = (
+            select(Visitor, derniere_visite_at, visite_ouverte_id)
+            .outerjoin(
+                Visit,
+                (Visit.visitor_id == Visitor.id) & (Visit.statut != VisitStatus.ANNULEE),
+            )
+            .where(self._clause_recherche(terme))
+            .group_by(Visitor.id)
+            # `nulls_last` explicite : PostgreSQL place les NULL en tête sur un tri
+            # descendant, SQLite en queue. Le tri ne doit pas dépendre du moteur.
+            .order_by(derniere_visite_at.desc().nulls_last(), Visitor.nom, Visitor.id)
+            .limit(limit)
+            .offset(offset)
+        )
+        return [
+            (visiteur, derniere, ouverte_id)
+            for visiteur, derniere, ouverte_id in (await self.session.execute(stmt)).all()
+        ]
 
 
 class VisitRepository:

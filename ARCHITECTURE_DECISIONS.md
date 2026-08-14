@@ -594,3 +594,88 @@ fragment d'un numéro de carte purement numérique.
 un NIN saisi à la main (`2 K05 2012 00108`) et le même NIN lu par l'OCR
 (`2K05201200108`) formeraient deux valeurs distinctes dans une colonne indexée et
 destinée à la recherche.
+
+---
+
+## ADR-017 — Réenregistrer un visiteur connu sans rescanner sa pièce
+
+**Contexte.** Un visiteur régulier faisait rescanner sa pièce à chaque venue, alors
+que sa fiche existe déjà : `_upsert_visitor` déduplique sur le couple
+`(type_document, numero_document)` depuis l'ADR-010. Ce qui manquait n'était pas la
+déduplication, mais le moyen de **retrouver** la fiche : `GET /visits?search=`
+cherche des visites, et `POST /visits` exigeait le bloc `visitor` complet.
+
+### Deux ajouts
+
+| Route | Rôle |
+|---|---|
+| `GET /visitors?search=` | Retrouve une fiche par nom, prénom, n° de document ou NIN |
+| `POST /visits` avec `visitor_id` | Enregistre la visite à partir de cette fiche |
+
+`visitor` et `visitor_id` sont **exclusifs**. Accepter les deux obligerait à trancher
+un désaccord entre la fiche référencée et l'identité fournie — un arbitrage qu'aucune
+règle ne rend évident, et qui finirait par inscrire une identité erronée au registre.
+
+La recherche renvoie deux champs calculés dans la **même requête** que les fiches —
+`derniere_visite_at` et `visite_ouverte_id`. Les calculer fiche par fiche produirait
+un N+1 sur une route appelée à chaque frappe de l'agent.
+
+### Un visiteur déjà présent ne peut pas entrer une seconde fois
+
+`find_open_visit` existait depuis l'origine sans être appelé nulle part : deux visites
+`PRESENT` pouvaient coexister pour la même personne. Le rescan de la pièce freinait
+naturellement la double saisie ; en reprenant une fiche connue, elle ne coûte plus que
+deux gestes et **va se produire**.
+
+Décision : `409 VISITOR_ALREADY_PRESENT`, avec la visite ouverte et son heure d'entrée
+dans les `details`. Le client propose « clôturer puis réenregistrer » au lieu
+d'afficher une impasse, et `visite_ouverte_id` lui permet même d'anticiper sans
+attendre l'erreur.
+
+Les deux alternatives ont été écartées :
+
+- **Accepter en signalant** — le compteur des présents du dashboard devient faux, et
+  rien ne nettoie jamais les visites fantômes.
+- **Clôturer automatiquement l'ancienne** — inscrit au registre une heure de sortie
+  qui n'a jamais été constatée. Sur un registre destiné à l'audit, c'est une donnée
+  inventée.
+
+Contrepartie assumée : si un visiteur est parti sans être clôturé, l'agent doit
+d'abord fermer l'ancienne visite. Un tap — et c'est précisément ce qui purge les
+visites restées ouvertes.
+
+**Effet sur la synchro hors-ligne.** Un batch contenant deux entrées pour la même
+personne voit la seconde remonter en `conflict`, avec son `error_code`. C'est le
+comportement voulu, mais il découle d'une limite préexistante : `POST /visits/sync`
+ne transporte que des **entrées**, jamais les sorties saisies hors-ligne. Tant que
+c'est le cas, un aller-retour dans la même journée hors connexion ne se rejouera pas
+tel quel. À traiter quand la synchro des clôtures sera spécifiée.
+
+### Champs de passage : surcharge plutôt que migration
+
+`provenance`, `immatriculation_vehicule` et `telephone` vivent sur `Visitor` alors
+qu'ils décrivent le **passage** : reprendre une fiche telle quelle recopierait en
+silence la plaque du véhicule d'il y a trois mois. Le bloc `visitor_passage` les
+rafraîchit au moment de l'enregistrement.
+
+C'est un compromis, pas la modélisation juste. Celle-ci porterait ces champs sur
+`Visit`, avec une migration et une reprise des données existantes ; la surcharge est
+livrable immédiatement et couvre le besoin réel — que la visite du jour porte les
+bonnes informations. **Limite connue :** la fiche ne garde que la dernière valeur,
+l'historique par visite n'est pas reconstituable. Le jour où on veut savoir avec quel
+véhicule quelqu'un est venu en mars, il faut faire la migration.
+
+### Données personnelles de la recherche
+
+La recherche expose de l'identité, et pas uniquement aux administrateurs — l'agent
+d'accueil en a besoin. Trois garde-fous :
+
+1. **Trois caractères minimum** : sans eux, une seule lettre parcourt le fichier
+   entier. Un terme réduit à de la ponctuation est également neutralisé, sans quoi il
+   deviendrait `%%` sur les colonnes de numéros.
+2. **Pagination bornée** à 100 entrées par page, comme le reste de l'API.
+3. **Trace applicative** de chaque recherche (acteur, nombre de résultats), sans le
+   terme cherché. Le journal d'audit n'est pas alimenté : une entrée par frappe le
+   rendrait illisible pour ce qu'il sert vraiment, les écritures. En revanche
+   `visit.created` porte désormais `visiteur_reutilise`, qui dit si la visite a été
+   enregistrée **sans rescan** de la pièce.

@@ -95,6 +95,11 @@ class VisitNotFoundError(NotFoundError):
     message = "Visite introuvable."
 
 
+class VisitorNotFoundError(NotFoundError):
+    error_code = "VISITOR_NOT_FOUND"
+    message = "Visiteur introuvable."
+
+
 class ServiceNotFoundError(NotFoundError):
     error_code = "SERVICE_NOT_FOUND"
     message = "Service introuvable."
@@ -134,6 +139,20 @@ class VisitAlreadyClosedError(ConflictError):
 class DuplicateVisitError(ConflictError):
     error_code = "DUPLICATE_VISIT"
     message = "Cette visite a déjà été enregistrée."
+
+
+class VisitorAlreadyPresentError(ConflictError):
+    """Le visiteur a déjà une visite ouverte : il ne peut pas entrer deux fois.
+
+    Les `details` portent la visite en cours et son heure d'entrée, pour que le
+    client propose la clôture plutôt que de renvoyer l'agent à un message d'erreur.
+    """
+
+    error_code = "VISITOR_ALREADY_PRESENT"
+    message = (
+        "Ce visiteur a déjà une visite en cours : clôturez-la avant d'en "
+        "enregistrer une nouvelle."
+    )
 
 
 class VisitCancelledError(ConflictError):

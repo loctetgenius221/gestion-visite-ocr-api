@@ -20,6 +20,8 @@ from app.core.errors import (
     VisitAlreadyClosedError,
     VisitCancelledError,
     VisitNotFoundError,
+    VisitorAlreadyPresentError,
+    VisitorNotFoundError,
 )
 from app.core.logging import get_logger
 from app.models.base import ensure_utc
@@ -38,6 +40,8 @@ from app.schemas.visit import (
     VisitCreate,
     VisitFilters,
     VisitorInput,
+    VisitorRead,
+    VisitorSearchResult,
     VisitRead,
     VisitSyncItemResult,
     VisitSyncResponse,
@@ -76,6 +80,9 @@ class VisitService:
                     "service_id": visit.service_id,
                     "agent_id": visit.agent_id,
                     "client_reference": visit.client_reference,
+                    # Trace la reprise d'une fiche connue : la visite a été
+                    # enregistrée **sans rescanner** la pièce d'identité.
+                    "visiteur_reutilise": payload.visitor_id is not None,
                 },
                 context=self.context,
             )
@@ -141,7 +148,8 @@ class VisitService:
                     "Ce motif est archivé.", details={"purpose_id": str(purpose.id)}
                 )
 
-        visitor = await self._upsert_visitor(payload.visitor)
+        visitor = await self._resoudre_visiteur(payload)
+        await self._refuser_si_deja_present(visitor)
 
         visit = Visit(
             visitor_id=visitor.id,
@@ -157,6 +165,85 @@ class VisitService:
             client_reference=payload.client_reference,
         )
         return await self.visits.add(visit)
+
+    async def _resoudre_visiteur(self, payload: VisitCreate) -> Visitor:
+        """Fiche du visiteur : reprise d'une fiche connue, ou créée/mise à jour au scan.
+
+        `VisitCreate` garantit qu'une seule des deux sources est renseignée.
+        """
+        if payload.visitor_id is None:
+            assert payload.visitor is not None
+            return await self._upsert_visitor(payload.visitor)
+
+        visitor = await self.visitors.get_by_id(payload.visitor_id)
+        if visitor is None:
+            raise VisitorNotFoundError(details={"visitor_id": str(payload.visitor_id)})
+
+        if payload.visitor_passage is not None:
+            # `exclude_none` : un champ omis ne doit pas effacer une valeur connue.
+            modifications = payload.visitor_passage.model_dump(exclude_none=True)
+            for champ, valeur in modifications.items():
+                setattr(visitor, champ, valeur)
+            await self.session.flush()
+
+        return visitor
+
+    async def _refuser_si_deja_present(self, visitor: Visitor) -> None:
+        """Une même personne ne peut pas être présente deux fois.
+
+        Le rescan de la pièce freinait naturellement la double saisie ; en reprenant
+        une fiche connue, elle ne coûte plus que deux gestes et va se produire. Deux
+        visites `PRESENT` pour la même personne fausseraient le compteur des présents
+        du dashboard, sans que personne ne les nettoie.
+
+        Le conflit porte la visite ouverte et son heure d'entrée : le client peut
+        proposer « clôturer puis réenregistrer » plutôt qu'afficher une impasse.
+        """
+        ouverte = await self.visits.find_open_visit(visitor.id)
+        if ouverte is None:
+            return
+        raise VisitorAlreadyPresentError(
+            details={
+                "visitor_id": str(visitor.id),
+                "visit_id": str(ouverte.id),
+                "checked_in_at": ouverte.checked_in_at,
+            }
+        )
+
+    async def search_visitors(
+        self, terme: str, pagination: PaginationParams, current_user: User
+    ) -> Page[VisitorSearchResult]:
+        """Retrouve un visiteur déjà venu, pour l'enregistrer sans rescanner sa pièce.
+
+        La route expose de l'identité : sa longueur minimale est imposée côté
+        routeur, et le nombre de résultats consultés est tracé dans les logs
+        applicatifs. Le journal d'audit n'est pas alimenté ici — une entrée par
+        frappe de l'agent le rendrait illisible pour ce qu'il sert vraiment,
+        les écritures.
+        """
+        total = await self.visitors.count_search(terme)
+        lignes = await self.visitors.search(
+            terme, limit=pagination.page_size, offset=pagination.offset
+        )
+
+        logger.info(
+            "Recherche de visiteurs",
+            extra={"resultats": total, "acteur": str(current_user.id)},
+        )
+
+        return Page[VisitorSearchResult](
+            items=[
+                VisitorSearchResult(
+                    **VisitorRead.model_validate(visiteur).model_dump(),
+                    derniere_visite_at=derniere,
+                    visite_ouverte_id=ouverte_id,
+                )
+                for visiteur, derniere, ouverte_id in lignes
+            ],
+            total=total,
+            page=pagination.page,
+            page_size=pagination.page_size,
+        )
 
     async def _upsert_visitor(self, data: VisitorInput) -> Visitor:
         """Réutilise le visiteur existant (même document) et rafraîchit ses coordonnées.

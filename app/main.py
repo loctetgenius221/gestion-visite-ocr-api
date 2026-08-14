@@ -24,6 +24,7 @@ from app.routers import (
     referentiels,
     uploads,
     users,
+    visitors,
     visits,
 )
 from app.routers import (
@@ -108,6 +109,7 @@ def create_app() -> FastAPI:
     application.include_router(auth.me_router, prefix=prefix)
     application.include_router(ocr.router, prefix=prefix)
     application.include_router(visits.router, prefix=prefix)
+    application.include_router(visitors.router, prefix=prefix)
     application.include_router(referentiels.router, prefix=prefix)
     application.include_router(dashboard.router, prefix=prefix)
     application.include_router(uploads.router, prefix=prefix)
