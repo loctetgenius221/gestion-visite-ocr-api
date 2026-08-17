@@ -75,6 +75,10 @@ async def create_visit(
       n'a pas à faire rescanner sa pièce (ADR-017). `visitor_passage` rafraîchit
       alors ce qui change d'une venue à l'autre (téléphone, provenance, véhicule).
 
+    `agent_id` est **facultatif** : un dépôt de dossier, un retrait de document ou
+    une livraison s'adresse au service, pas à quelqu'un (ADR-019). Fourni, l'agent
+    doit appartenir au service indiqué.
+
     Un visiteur déjà `PRESENT` ne peut pas entrer une seconde fois : la réponse est
     un `409 VISITOR_ALREADY_PRESENT` portant la visite ouverte et son heure d'entrée,
     de quoi proposer la clôture.

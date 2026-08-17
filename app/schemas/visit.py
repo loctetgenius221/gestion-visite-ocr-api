@@ -160,7 +160,14 @@ class VisitCreate(BaseModel):
     visitor_id: uuid.UUID | None = None
     visitor_passage: VisitorPassageInput | None = None
     service_id: uuid.UUID
-    agent_id: uuid.UUID
+    agent_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Personne rencontrée. **Facultative** : un dépôt de dossier ou un "
+            "retrait de document s'adresse au service, pas à quelqu'un (ADR-019). "
+            "Fournie, elle doit appartenir au service indiqué."
+        ),
+    )
     purpose_id: uuid.UUID | None = None
     motif_libre: str | None = Field(default=None, max_length=500)
     badge_number: str | None = Field(default=None, max_length=50)
@@ -215,7 +222,7 @@ class VisitRead(ORMModel):
 
     visitor: VisitorRead
     service: ServiceRead
-    agent: AgentRead
+    agent: AgentRead | None = None
     purpose: PurposeRead | None = None
     checked_in_user: UserRead
     checked_out_user: UserRead | None = None
@@ -231,6 +238,10 @@ class VisitUpdate(BaseModel):
 
     L'identité du visiteur n'est pas modifiable ici : elle provient du scan MRZ et
     la corriger relèverait d'un autre geste métier, avec sa propre traçabilité.
+
+    Un champ **omis** reste inchangé ; un champ envoyé à `null` est effacé. La
+    nuance compte depuis que la personne rencontrée est facultative (ADR-019) :
+    `{"agent_id": null}` est le seul moyen de retirer une personne mal saisie.
     """
 
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -238,7 +249,9 @@ class VisitUpdate(BaseModel):
     reason: str = Field(min_length=3, max_length=500)
 
     service_id: uuid.UUID | None = None
-    agent_id: uuid.UUID | None = None
+    agent_id: uuid.UUID | None = Field(
+        default=None, description="`null` retire la personne rencontrée."
+    )
     purpose_id: uuid.UUID | None = None
     motif_libre: str | None = Field(default=None, max_length=500)
     badge_number: str | None = Field(default=None, max_length=50)
@@ -250,6 +263,25 @@ class VisitUpdate(BaseModel):
         modifiables = self.model_dump(exclude={"reason"}, exclude_unset=True)
         if not modifiables:
             raise ValueError("Aucun champ à modifier n'a été fourni.")
+        return self
+
+    @model_validator(mode="after")
+    def _champs_ineffacables(self) -> VisitUpdate:
+        """Refuse d'effacer ce qu'une visite ne peut pas ne pas avoir.
+
+        `null` vaut « efface » depuis que `agent_id` est facultatif. Sans ce
+        garde-fou, `{"service_id": null}` ou `{"checked_in_at": null}` partirait
+        jusqu'à la base pour y échouer sur une contrainte `NOT NULL` — une erreur
+        500 opaque là où un refus explicite est dû.
+        """
+        fournis = self.model_dump(exclude_unset=True)
+        obligatoires = [
+            champ for champ in ("service_id", "checked_in_at") if fournis.get(champ, ...) is None
+        ]
+        if obligatoires:
+            raise ValueError(
+                "Ces champs ne peuvent pas être effacés : " + ", ".join(sorted(obligatoires))
+            )
         return self
 
 

@@ -66,7 +66,9 @@ def _ligne(visit: Visit) -> dict[str, str]:
         "nin": visit.visitor.nin or "",
         "nationalite": visit.visitor.nationalite or "",
         "service": visit.service.name,
-        "agent": visit.agent.name,
+        # Vide plutôt qu'un libellé : le tableur doit pouvoir filtrer « sans
+        # personne rencontrée » comme n'importe quelle cellule vide (ADR-019).
+        "agent": visit.agent.name if visit.agent else "",
         "motif": visit.purpose.libelle if visit.purpose else (visit.motif_libre or ""),
         "badge": visit.badge_number or "",
         "entree": _horodatage(visit.checked_in_at),

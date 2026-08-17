@@ -125,19 +125,22 @@ class VisitService:
                 "Ce service est archivé.", details={"service_id": str(service.id)}
             )
 
-        agent = await self.agents.get_by_id(payload.agent_id)
-        if agent is None:
-            raise AgentNotFoundError(details={"agent_id": str(payload.agent_id)})
-        if agent.is_archived:
-            raise ArchivedReferentielError(
-                "Cet agent est archivé.", details={"agent_id": str(agent.id)}
-            )
-        if agent.service_id != payload.service_id:
-            raise ConflictError(
-                "L'agent sélectionné n'appartient pas au service indiqué.",
-                error_code="AGENT_SERVICE_MISMATCH",
-                details={"agent_id": str(agent.id), "service_id": str(payload.service_id)},
-            )
+        # Facultative : un dépôt ou un retrait s'adresse au service, pas à une
+        # personne (ADR-019). Fournie, elle reste contrôlée comme avant.
+        if payload.agent_id is not None:
+            agent = await self.agents.get_by_id(payload.agent_id)
+            if agent is None:
+                raise AgentNotFoundError(details={"agent_id": str(payload.agent_id)})
+            if agent.is_archived:
+                raise ArchivedReferentielError(
+                    "Cet agent est archivé.", details={"agent_id": str(agent.id)}
+                )
+            if agent.service_id != payload.service_id:
+                raise ConflictError(
+                    "L'agent sélectionné n'appartient pas au service indiqué.",
+                    error_code="AGENT_SERVICE_MISMATCH",
+                    details={"agent_id": str(agent.id), "service_id": str(payload.service_id)},
+                )
 
         if payload.purpose_id is not None:
             purpose = await self.purposes.get_by_id(payload.purpose_id)
@@ -445,14 +448,21 @@ class VisitService:
 
         Les valeurs proviennent de `VisitUpdate.model_dump()` : Pydantic a déjà
         validé qu'un `service_id` fourni est bien un UUID.
+
+        Le repli passe par `get(clé, défaut)` et non par un `or` : depuis que la
+        personne rencontrée est facultative (ADR-019), `{"agent_id": null}` veut
+        dire « retire-la ». Un `or` confondrait cet effacement volontaire avec une
+        absence de modification, et retomberait sur l'agent actuel.
         """
-        service_id: uuid.UUID = modifications.get("service_id") or visit.service_id
-        agent_id: uuid.UUID = modifications.get("agent_id") or visit.agent_id
+        service_id: uuid.UUID = modifications.get("service_id", visit.service_id)
+        agent_id: uuid.UUID | None = modifications.get("agent_id", visit.agent_id)
 
         if "service_id" in modifications and not await self.services.exists(service_id):
             raise ServiceNotFoundError(details={"service_id": str(service_id)})
 
-        if "agent_id" in modifications or "service_id" in modifications:
+        # Sans personne rencontrée, il n'y a plus de cohérence agent/service à
+        # vérifier — y compris quand c'est le service qui change.
+        if agent_id is not None and ("agent_id" in modifications or "service_id" in modifications):
             agent = await self.agents.get_by_id(agent_id)
             if agent is None:
                 raise AgentNotFoundError(details={"agent_id": str(agent_id)})

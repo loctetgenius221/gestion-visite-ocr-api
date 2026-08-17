@@ -1,4 +1,4 @@
-# Guide d'intégration front — évolutions du 14 août 2026
+# Guide d'intégration front — évolutions d'août 2026
 
 Destiné aux équipes **app mobile (Flutter)** et **dashboard web**.
 
@@ -17,14 +17,21 @@ Base URL : `/api/v1` · Authentification : `Authorization: Bearer <access_token>
 | 4 | Photos recto + verso en saisie manuelle | ✅ | ✅ (lecture) | Non, additif |
 | 5 | Mot de passe agent saisi au lieu de généré | — | ✅ | Non, existait déjà |
 | 6 | Réglage de conservation des photos | — | ✅ | Non, additif |
+| 7 | La personne rencontrée devient facultative | ✅ | ✅ | Non, mais `agent` peut être `null` en lecture |
 
-### Les deux seuls points qui cassent quelque chose
+### Les trois seuls points qui cassent quelque chose
 
 1. **`POST /visits` peut désormais répondre `409 VISITOR_ALREADY_PRESENT`.** Si vous
    ne traitez pas ce code, l'agent verra une erreur générique là où il devrait voir
    « déjà présent depuis 10h30 — clôturer ? ». **C'est le point à traiter en premier.**
 2. **Une validation client « NIN = 13 chiffres » rejettera des cartes valides.**
    Le champ est alphanumérique.
+3. **`agent` peut valoir `null` dans toute `VisitRead`.** Un `visit.agent.name` sans
+   garde plante. La rupture est *conditionnelle* : elle ne se déclenche qu'à partir
+   du moment où une visite sans personne rencontrée existe en base — donc dès que le
+   dashboard ou une tablette à jour en crée une. Un client non corrigé plantera alors
+   en lisant le registre, **y compris sur des visites qu'il n'a pas créées**.
+   Traitez-le avant d'ouvrir la fonctionnalité aux agents.
 
 Tout le reste est additif : le code existant continue de fonctionner à l'identique.
 
@@ -309,9 +316,81 @@ scan réussi, ne demandez pas de photo supplémentaire : le verso est déjà dé
 
 ---
 
-## 6. Dashboard web uniquement
+## 6. La personne rencontrée devient facultative
 
-### 6.1 Mot de passe d'un agent : saisi plutôt que généré
+Un dépôt de dossier, un retrait de document ou une livraison s'adresse **au service**,
+pas à quelqu'un. Jusqu'ici l'agent d'accueil devait quand même désigner une personne —
+il en choisissait une au hasard, et le classement des agents les plus visités du
+dashboard devenait un classement de qui est sélectionné par défaut.
+
+### 6.1 À la création
+
+`agent_id` est désormais **optionnel** dans `POST /visits` : omettez-le, ou envoyez
+`null`.
+
+```json
+{
+  "visitor": { "…": "…" },
+  "service_id": "…",
+  "purpose_id": "…",
+  "badge_number": "B-042"
+}
+```
+
+- `service_id` reste **obligatoire** : c'est lui qui situe la visite.
+- Un `agent_id` **fourni** est contrôlé exactement comme avant : il doit exister, ne
+  pas être archivé, et appartenir au service (`409 AGENT_SERVICE_MISMATCH`).
+- Le motif ne change pas : `purpose_id` ou `motif_libre`, comme aujourd'hui.
+
+### 6.2 En lecture — le point à traiter
+
+**`agent` peut désormais valoir `null`** dans toute `VisitRead` : détail de visite,
+listing, réponse de création, export.
+
+```json
+{
+  "id": "…",
+  "statut": "PRESENT",
+  "service": { "code": "DRH", "name": "Direction des RH" },
+  "agent": null,
+  "purpose": { "libelle": "Dépôt de dossier" }
+}
+```
+
+Si votre code fait `visit.agent.name` sans garde, il plantera sur ces visites.
+C'est le seul vrai travail de cette évolution. Affichez « — » ou « Service »
+plutôt qu'une chaîne vide muette.
+
+### 6.3 Retirer une personne saisie par erreur (dashboard)
+
+`PATCH /visits/{id}` distingue le champ **omis** du champ **envoyé à `null`** :
+
+| Corps | Effet |
+|---|---|
+| `{"reason": "…", "badge_number": "B-999"}` | L'agent reste en place |
+| `{"reason": "…", "agent_id": null}` | **L'agent est retiré** |
+
+Attention : `null` ne vaut « efface » que pour `agent_id` et `purpose_id`. Sur
+`service_id` ou `checked_in_at`, il est refusé en `400 VALIDATION_ERROR` — ces
+champs ne peuvent pas être vides.
+
+### 6.4 Effets sur les statistiques
+
+| Endroit | Comportement |
+|---|---|
+| Export CSV | Colonne « Personne rencontrée » **vide** |
+| `GET /dashboard/top-agents` | Ces visites sont **exclues** du classement |
+| Répartition par service, séries temporelles, compteurs | **Inchangés** — ces visites comptent partout ailleurs |
+
+Conséquence à afficher clairement : le total de `top-agents` est inférieur au nombre
+de visites de la période. C'est un **palmarès de personnes**, pas une répartition —
+si vous le présentez comme un camembert à 100 %, l'écart passera pour un bug.
+
+---
+
+## 7. Dashboard web uniquement
+
+### 7.1 Mot de passe d'un agent : saisi plutôt que généré
 
 **Rien de nouveau côté API — le champ existait déjà, il manque simplement dans
 l'interface.**
@@ -341,7 +420,7 @@ Même chose à la création : `POST /users` accepte un `mot_de_passe` optionnel.
 > Un forçage du changement à la première connexion n'existe pas encore côté API —
 > dites-nous si vous le voulez.
 
-### 6.2 Nouveau réglage : conservation des photos de pièces
+### 7.2 Nouveau réglage : conservation des photos de pièces
 
 `GET /api/v1/settings` et `PUT /api/v1/settings` exposent un champ de plus :
 
@@ -374,14 +453,17 @@ Deux choses à dire clairement dans l'interface :
 
 ---
 
-## 7. Checklist d'intégration
+## 8. Checklist d'intégration
 
 ### App mobile — par ordre de priorité
 
 - [ ] **Traiter `409 VISITOR_ALREADY_PRESENT`** sur `POST /visits` : écran « déjà
       présent », bouton de clôture depuis `details.visit_id`, puis rejeu
 - [ ] **Relâcher la validation du NIN** en 13 caractères alphanumériques
+- [ ] **Protéger tous les accès à `visit.agent`** — il peut être `null`
 - [ ] Vérifier qu'aucun repli sur `numero_document` ne subsiste quand `nin` est nul
+- [ ] Rendre le sélecteur de personne rencontrée facultatif, avec une option
+      explicite « Aucune / je viens pour le service »
 - [ ] Écran de recherche `GET /visitors` (3 caractères min, debounce, tri déjà fait
       côté serveur)
 - [ ] Enregistrement via `visitor_id` + confirmation des champs `visitor_passage`
@@ -393,6 +475,11 @@ Deux choses à dire clairement dans l'interface :
 
 ### Dashboard web
 
+- [ ] **Protéger tous les accès à `visit.agent`** dans le registre et l'export
+- [ ] Sélecteur de personne rencontrée facultatif, et `{"agent_id": null}` pour la
+      retirer d'une visite mal saisie
+- [ ] Présenter `top-agents` comme un **palmarès**, pas une répartition : son total
+      est inférieur au nombre de visites
 - [ ] Champ de saisie du mot de passe dans l'écran de réinitialisation (12 car. min)
 - [ ] Réglage `document_images_retention_days` dans l'écran des paramètres
 - [ ] Afficher `document_recto_url` / `document_verso_url` sur le détail d'une visite
@@ -400,13 +487,15 @@ Deux choses à dire clairement dans l'interface :
 
 ---
 
-## 8. Récapitulatif des codes d'erreur nouveaux ou concernés
+## 9. Récapitulatif des codes d'erreur nouveaux ou concernés
 
 | Code | HTTP | Route | Quand |
 |---|---|---|---|
 | `VISITOR_ALREADY_PRESENT` | 409 | `POST /visits`, `/visits/sync` | Le visiteur a déjà une visite `PRESENT` |
 | `VISITOR_NOT_FOUND` | 404 | `POST /visits` | `visitor_id` inconnu |
 | `VALIDATION_ERROR` | 400 | `POST /visits` | `visitor` + `visitor_id` ensemble, ou aucun des deux ; `visitor_passage` avec `visitor` |
+| `VALIDATION_ERROR` | 400 | `PATCH /visits/{id}` | `service_id` ou `checked_in_at` envoyé à `null` — ces champs ne s'effacent pas |
+| `AGENT_SERVICE_MISMATCH` | 409 | `POST /visits` | `agent_id` fourni mais n'appartenant pas au service. Inchangé : omettre l'agent est légal, en fournir un incohérent ne l'est pas |
 | `VALIDATION_ERROR` | 400 | `GET /visitors` | `search` de moins de 3 caractères |
 | `VALIDATION_ERROR` | 400 | `POST /uploads/document` | `face` autre que `recto`/`verso` |
 | `UNSUPPORTED_IMAGE` | 400 | `POST /uploads/document` | Extension non autorisée, ou fichier vide |
@@ -414,12 +503,13 @@ Deux choses à dire clairement dans l'interface :
 
 ---
 
-## 9. Où trouver le reste
+## 10. Où trouver le reste
 
 - **Contrat complet et à jour** : `/docs` (Swagger) sur l'environnement de recette.
   Les nouveaux champs y sont décrits un par un.
 - **Pourquoi ces choix** : `ARCHITECTURE_DECISIONS.md`, ADR-016 (NIN alphanumérique),
-  ADR-017 (réenregistrement et double présence), ADR-018 (recto/verso et conservation).
+  ADR-017 (réenregistrement et double présence), ADR-018 (recto/verso et conservation),
+  ADR-019 (personne rencontrée facultative).
 
 Une question sur un contrat, un cas de terrain qui ne rentre pas dans ce qui est
 décrit ici : remontez-le, c'est le bon moment.

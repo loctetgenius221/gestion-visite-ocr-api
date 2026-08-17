@@ -147,6 +147,73 @@ class TestCreateVisit:
         assert response.status_code == 401
 
 
+class TestVisiteSansPersonneRencontree:
+    """Dépôt, retrait, livraison : le visiteur va au service, pas à quelqu'un (ADR-019)."""
+
+    async def test_agent_id_omis_est_accepte(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        payload = visit_payload(seeded)
+        del payload["agent_id"]
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 201, response.text
+        body = response.json()
+        assert body["agent"] is None
+        # Le service, lui, reste obligatoire : c'est lui qui situe la visite.
+        assert body["service"]["code"] == "DRH"
+
+    async def test_agent_id_explicitement_nul_est_accepte(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        payload = visit_payload(seeded, agent_id=None)
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 201
+        assert response.json()["agent"] is None
+
+    async def test_le_service_reste_obligatoire(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        payload = visit_payload(seeded)
+        del payload["service_id"]
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+
+    async def test_un_agent_fourni_reste_controle(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        """Rendre facultatif ne veut pas dire relâcher : fourni, l'agent est vérifié."""
+        payload = visit_payload(seeded, agent_id=str(seeded["other_agent"].id))
+
+        response = await client.post("/visits", json=payload, headers=auth_headers)
+
+        assert response.status_code == 409
+        assert response.json()["error_code"] == "AGENT_SERVICE_MISMATCH"
+
+    async def test_export_csv_laisse_la_cellule_vide(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict, admin_headers: dict
+    ):
+        payload = visit_payload(seeded)
+        del payload["agent_id"]
+        await client.post("/visits", json=payload, headers=auth_headers)
+
+        export = await client.get("/visits/export", headers=admin_headers)
+
+        assert export.status_code == 200
+        lignes = export.content.decode("utf-8-sig").splitlines()
+        entetes = lignes[0].split(";")
+        valeurs = lignes[1].split(";")
+        assert valeurs[entetes.index("Personne rencontrée")] == ""
+        # Le reste du registre est intact : la visite n'est pas amputée.
+        assert valeurs[entetes.index("Service visité")] == "Direction des RH"
+
+
 class TestVisiteurDejaPresent:
     """Une personne ne peut pas être présente deux fois (ADR-017)."""
 

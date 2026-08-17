@@ -116,6 +116,80 @@ class TestCorrection:
         assert response.json()["error_code"] == "INVALID_VISIT_INTERVAL"
 
 
+class TestRetraitDeLaPersonneRencontree:
+    """Depuis l'ADR-019, `null` veut dire « efface » et non « inchangé »."""
+
+    async def test_agent_id_nul_retire_la_personne(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict, admin_headers: dict
+    ):
+        visite = await _creer_visite(client, auth_headers, seeded)
+        assert visite["agent"] is not None
+
+        response = await client.patch(
+            f"/visits/{visite['id']}",
+            json={"reason": "Dépôt de dossier, personne rencontrée saisie par erreur",
+                  "agent_id": None},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["agent"] is None
+
+    async def test_agent_id_omis_laisse_la_personne_en_place(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict, admin_headers: dict
+    ):
+        """La nuance qui compte : omettre n'est pas effacer."""
+        visite = await _creer_visite(client, auth_headers, seeded)
+
+        response = await client.patch(
+            f"/visits/{visite['id']}",
+            json={"reason": "Correction du badge seulement", "badge_number": "B-999"},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["agent"]["name"] == "Aminata Diallo"
+
+    async def test_changer_de_service_sans_agent_ne_declenche_aucun_conflit(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict, admin_headers: dict
+    ):
+        """Sans personne rencontrée, il n'y a plus de cohérence agent/service à tenir."""
+        visite = await _creer_visite(client, auth_headers, seeded)
+        await client.patch(
+            f"/visits/{visite['id']}",
+            json={"reason": "Retrait de la personne rencontrée", "agent_id": None},
+            headers=admin_headers,
+        )
+
+        response = await client.patch(
+            f"/visits/{visite['id']}",
+            json={
+                "reason": "Le dépôt concernait en fait la DSI",
+                "service_id": str(seeded["other_service"].id),
+            },
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["service"]["code"] == "DSI"
+        assert response.json()["agent"] is None
+
+    async def test_le_service_ne_peut_pas_etre_efface(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict, admin_headers: dict
+    ):
+        """Sans ce refus, le `null` partirait échouer en base sur un NOT NULL."""
+        visite = await _creer_visite(client, auth_headers, seeded)
+
+        response = await client.patch(
+            f"/visits/{visite['id']}",
+            json={"reason": "Tentative d'effacement du service", "service_id": None},
+            headers=admin_headers,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+
+
 class TestAnnulation:
     async def test_annulation_logique_conserve_la_visite(
         self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict

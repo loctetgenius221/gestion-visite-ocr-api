@@ -35,10 +35,14 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
         index=True,
     )
-    agent_id: Mapped[uuid.UUID] = mapped_column(
+    # Nullable : beaucoup de visites ne visent personne en particulier — dépôt de
+    # dossier, retrait de document, livraison. Le visiteur va **au service**, pas à
+    # quelqu'un. Forcer une personne dans ces cas produisait une donnée fausse mais
+    # crédible : l'agent d'accueil désignait toujours le même nom (ADR-019).
+    agent_id: Mapped[uuid.UUID | None] = mapped_column(
         Uuid(as_uuid=True),
         ForeignKey("agents.id", ondelete="RESTRICT"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     # Nullable : l'agent de contrôle peut saisir un motif hors référentiel (`motif_libre`).
@@ -83,7 +87,7 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     visitor: Mapped[Visitor] = relationship("Visitor", lazy="joined")
     service: Mapped[Service] = relationship("Service", lazy="joined")
-    agent: Mapped[Agent] = relationship("Agent", lazy="joined")
+    agent: Mapped[Agent | None] = relationship("Agent", lazy="joined")
     purpose: Mapped[Purpose | None] = relationship("Purpose", lazy="joined")
     checked_in_user: Mapped[User] = relationship(
         "User", foreign_keys=[checked_in_by], lazy="joined"

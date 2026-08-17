@@ -333,7 +333,14 @@ class VisitRepository:
     async def top_agents(
         self, start: datetime, end: datetime, *, limit: int
     ) -> list[tuple[Any, str, str | None, int]]:
-        """`(agent_id, nom, service, nombre)` des personnes les plus visitées."""
+        """`(agent_id, nom, service, nombre)` des personnes les plus visitées.
+
+        `join` et non `outerjoin`, à la différence de `count_by_purpose` : les
+        visites sans personne rencontrée (ADR-019) sont exclues du classement, ce
+        qui est le propre d'un palmarès de personnes. Le total de ce classement est
+        donc inférieur au nombre de visites de la période — c'est voulu, et le
+        dashboard doit le présenter comme tel plutôt que comme une répartition.
+        """
         stmt = (
             select(Agent.id, Agent.name, Service.name, func.count(Visit.id))
             .join(Agent, Visit.agent_id == Agent.id)

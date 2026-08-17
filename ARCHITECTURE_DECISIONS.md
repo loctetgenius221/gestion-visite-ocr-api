@@ -751,3 +751,82 @@ les noms de fichiers sont des UUID v4 non devinables, mais quiconque obtient une
 accède à l'image. Doubler le volume d'images de pièces double d'autant l'exposition.
 Le passage à `X-Accel-Redirect` derrière le bearer token devient plus urgent qu'il
 ne l'était — c'est un changement de contrat côté client, à planifier.
+
+---
+
+## ADR-019 — La personne rencontrée devient facultative
+
+**Contexte.** La spec §3 décrit `Visit.agent_id` comme une FK obligatoire, et le
+schéma initial l'a rendue `NOT NULL`. Or le référentiel des motifs livré par
+`app/seeds.py` contient « Dépôt de dossier », « Retrait de document » et
+« Livraison / prestation » : des visites qui, par construction, **ne visent
+personne**. Le visiteur va au service, pas à quelqu'un.
+
+### Le symptôme, et pourquoi il est grave
+
+Forcé de désigner une personne, l'agent d'accueil en choisit une — au hasard, ou
+toujours la première de la liste, typiquement le chef de service. La donnée obtenue
+est **fausse mais crédible**, exactement le mode de défaillance de l'ADR-014 où le
+champ NIN affichait le numéro de carte.
+
+Conséquence directe : `GET /dashboard/top-agents` cesse de classer les personnes les
+plus visitées pour classer celles qui sont sélectionnées par défaut. Un tableau de
+bord qui ment sans jamais lever d'erreur.
+
+### Décision
+
+`visits.agent_id` passe en **nullable** (migration `c9a4d13f6e27`). La clé étrangère
+et son `ON DELETE RESTRICT` sont conservés : un agent référencé reste indéboulonnable.
+
+Le précédent existait déjà dans le schéma : `purpose_id` est nullable depuis
+l'origine, avec `motif_libre` en repli. Il n'y avait pas de raison de principe pour
+que la personne rencontrée soit plus obligatoire que le motif.
+
+**Rendre facultatif n'est pas relâcher.** Un `agent_id` fourni reste contrôlé comme
+avant : existence, non-archivage, et appartenance au service
+(`AGENT_SERVICE_MISMATCH`). Seule l'absence devient légale.
+
+### Alternative écartée : un agent « Accueil » par service
+
+Zéro migration, livrable immédiatement — et c'est bien ce qui la rend tentante. Mais
+elle place des non-personnes dans le référentiel des personnes, et « Accueil DAF »
+finirait en tête du classement des agents les plus visités. C'est la même erreur
+qu'un repli sur `numero_document`, avec l'apparence de la propreté en plus. Un
+référentiel pollué ne se nettoie jamais.
+
+### Ce que `null` veut dire, maintenant
+
+`VisitUpdate` distingue depuis toujours le champ **omis** du champ **fourni**, via
+`exclude_unset`. Ce détail devient une fonctionnalité : `{"agent_id": null}` est le
+seul moyen de retirer une personne saisie par erreur.
+
+Deux corrections en découlent, toutes deux invisibles jusqu'ici :
+
+1. **`_verifier_references` utilisait `modifications.get(...) or visit.agent_id`.**
+   Le `or` confond `null` avec « non fourni » : l'effacement volontaire retombait
+   sur l'agent courant, et le contrôle agent/service portait sur une valeur que le
+   client venait justement de retirer. Le repli passe désormais par
+   `get(clé, défaut)`.
+2. **Un `null` sur un champ non-nullable partait échouer en base.**
+   `{"service_id": null}` ou `{"checked_in_at": null}` produisait une `IntegrityError`
+   remontée en 500 opaque. `VisitUpdate` les refuse maintenant explicitement, en 400.
+
+### Effets sur les agrégats
+
+| Endroit | Comportement | Pourquoi |
+|---|---|---|
+| Export CSV | Cellule **vide** | Un tableur filtre les cellules vides ; un libellé « non renseigné » serait une valeur de plus à connaître |
+| `top-agents` | Visites **exclues** du classement | `join` et non `outerjoin` : un palmarès de personnes n'a pas de ligne pour « personne » |
+| `by-service`, séries temporelles, compteurs | **Inchangés** | Ces visites sont des visites entières, elles comptent partout ailleurs |
+
+Le total de `top-agents` est donc inférieur au nombre de visites de la période. C'est
+voulu, mais le dashboard doit le présenter comme un palmarès et non comme une
+répartition — sans quoi l'écart passera pour un bug.
+
+### Ce qui n'a pas changé
+
+Le **motif** reste tel quel : `purpose_id` ou `motif_libre`, au choix. On aurait pu
+exiger un motif du référentiel quand aucune personne n'est désignée — le motif étant
+alors la seule chose qui explique la venue — mais c'est un durcissement qui se décide
+sur des données réelles, pas par anticipation. À rouvrir si les visites sans agent
+s'avèrent majoritairement assorties d'un motif libre inexploitable.
