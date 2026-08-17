@@ -75,6 +75,47 @@ par `DATABASE_URL`, refuse un identifiant déjà pris et un mot de passe de moin
 > depuis le dashboard. Cette commande sert surtout à l'amorçage, quand aucun
 > compte administrateur n'existe encore pour appeler cette route.
 
+### Importer l'annuaire réel (services et agents)
+
+`app.seeds` pose huit agents fictifs, de quoi cliquer dans l'app. Pour remplir les
+référentiels avec le personnel réel du ministère, à partir de l'export CSV de
+l'annuaire :
+
+```bash
+uv run python -m app.import_annuaire data/annuaire.csv --dry-run   # montre le plan
+uv run python -m app.import_annuaire data/annuaire.csv             # applique
+```
+
+Colonnes attendues — l'ordre est libre, la casse et les accents indifférents :
+
+```
+Matricule, nom_et_prenoms, Nom, Téléphone, Email, Fonction, Direction, Département, Sexe
+```
+
+Seules `nom_et_prenoms`, `Nom`, `Fonction` et `Département` (à défaut `Direction`)
+sont exploitées : la table `agents` ne stocke qu'un nom, une fonction, un bureau et
+un service. Matricule, téléphone, e-mail et sexe n'ont pas de colonne en base et
+sont ignorés — les importer supposerait une migration, et le registre des visites
+ne s'en sert nulle part.
+
+Le service de rattachement est **déduit du libellé de département** : son code est
+l'acronyme des mots significatifs (« Direction des Systemes D'informations » →
+`DSI`). Deux libellés donnant le même acronyme sont fusionnés — « SG » et
+« Sécretariat Général » — et le rapport le signale. Un service dont le code ou le
+nom existe déjà est réutilisé sans être renommé ; les lignes sans département vont
+dans `SANS_SERVICE`.
+
+Le script est **idempotent** : le relancer après un correctif du CSV ne crée pas de
+doublons, et ne modifie jamais une fiche existante sauf avec `--mettre-a-jour`
+(rafraîchit la seule fonction). Rien n'est jamais supprimé ni archivé : retirer
+quelqu'un de l'annuaire reste une action d'administrateur, les visites déjà
+enregistrées le référencent. Lancez toujours `--dry-run` d'abord — la
+correspondance libellé → service est une heuristique, et c'est le seul moment où
+elle se relit facilement.
+
+> Le CSV contient des données personnelles d'agents réels : il est ignoré par git
+> (`data/`, `/*.csv`) et n'a pas à être versionné.
+
 ---
 
 ## Tester l'API avec Postman

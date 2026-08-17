@@ -116,6 +116,39 @@ uv run python -m app.seeds
 uv run python -c "from app.services.ocr_engine import get_ocr_engine; get_ocr_engine().load()"
 ```
 
+### Annuaire du ministère
+
+`app.seeds` pose des services et des agents **de démonstration**. En production,
+remplissez les référentiels depuis l'export CSV de l'annuaire, une fois le schéma
+migré :
+
+```bash
+# Déposez le CSV hors du dépôt, lisible par l'utilisateur `sigv` uniquement
+install -o sigv -g sigv -m 600 annuaire.csv /home/sigv/annuaire.csv
+
+# Toujours en simulation d'abord : le rapport montre les services qui seraient
+# créés, ceux qui seraient réutilisés et les libellés fusionnés.
+sudo -u sigv /home/sigv/sigv-backend/.venv/bin/python -m app.import_annuaire \
+    /home/sigv/annuaire.csv --dry-run
+
+# Puis en réel
+sudo -u sigv /home/sigv/sigv-backend/.venv/bin/python -m app.import_annuaire \
+    /home/sigv/annuaire.csv
+```
+
+Le script est idempotent : à chaque nouvelle version de l'annuaire, relancez-le
+sur le CSV complet. Il n'ajoute que ce qui manque, ne renomme pas les services
+déjà administrés, et ne modifie une fiche existante qu'avec `--mettre-a-jour`.
+Rien n'est jamais supprimé : les départs se traitent en archivant depuis le
+dashboard, parce que les visites déjà enregistrées référencent l'agent visité.
+
+Le CSV contient les nom, téléphone et e-mail d'agents réels : effacez-le du
+serveur une fois l'import vérifié.
+
+```bash
+shred -u /home/sigv/annuaire.csv
+```
+
 ---
 
 ## 4. Service systemd

@@ -21,6 +21,11 @@ migration.sql
 # Fichiers uploadés (images MRZ, signatures) : données personnelles, jamais versionnées
 storage/
 
+# Annuaire du ministère importé par `python -m app.import_annuaire` : noms,
+# téléphones et e-mails d'agents réels, jamais versionnés non plus.
+data/
+/*.csv
+
 # Tests et outillage
 .pytest_cache/
 .coverage
