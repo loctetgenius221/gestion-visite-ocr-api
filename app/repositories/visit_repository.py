@@ -148,6 +148,13 @@ class VisitRepository:
         await self.session.flush()
         return visit
 
+    async def delete(self, visit: Visit) -> None:
+        """Suppression **physique**. Aucune table ne référence `visits` : rien à
+        cascader, et le journal d'audit — dont `entity_id` est une chaîne libre,
+        sans clé étrangère — survit à la ligne qu'il décrit."""
+        await self.session.delete(visit)
+        await self.session.flush()
+
     async def get_by_id(self, visit_id: uuid.UUID) -> Visit | None:
         # `populate_existing` force le rafraîchissement de l'instance déjà présente
         # dans l'identity map : sans lui, une relation chargée avant modification

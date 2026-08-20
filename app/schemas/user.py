@@ -11,9 +11,16 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field
 from app.models.enums import UserRole, UserStatus
 from app.schemas.common import ORMModel
 
-# Un mot de passe généré ou saisi doit résister à une attaque hors ligne : bcrypt
-# ralentit, il ne remplace pas la longueur.
-MIN_PASSWORD_LENGTH = 12
+# Plancher volontairement bas, ramené de 12 à 6 : l'application est interne, et le
+# mot de passe est retapé sur une tablette à chaque prise de poste. La longueur se
+# paie alors en contournements — mot de passe noté à côté du poste, ou partagé.
+#
+# Ce qui tient l'attaque **en ligne** n'est de toute façon pas la longueur mais le
+# verrouillage : `max_failed_login_attempts` (5 par défaut) bloque le compte
+# pendant `account_lockout_minutes`. Le compromis porte sur l'attaque **hors
+# ligne** : si la base des hash fuite, six caractères ne tiendront pas longtemps,
+# bcrypt ou non. Assumé ici, à rediscuter si l'API s'ouvre au-delà du ministère.
+MIN_PASSWORD_LENGTH = 6
 MAX_PASSWORD_LENGTH = 128
 
 

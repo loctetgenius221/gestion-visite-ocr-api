@@ -405,6 +405,67 @@ class VisitService:
         assert refreshed is not None
         return refreshed
 
+    async def delete_visit(self, visit_id: uuid.UUID, current_user: User) -> None:
+        """Suppression **définitive** d'une visite.
+
+        À distinguer de `cancel_visit`, qui est la voie normale : une visite
+        annulée reste au registre, motif à l'appui, et se relit des années après.
+        Ici la ligne disparaît — réservé aux saisies qui n'auraient jamais dû
+        exister (test, doublon manifeste), pas à la correction d'une visite réelle.
+
+        Le journal devient alors la **seule** trace restante : l'entrée
+        `visit.deleted` emporte donc un instantané complet de ce qui est détruit,
+        et non le seul identifiant. Sans lui, la question « que contenait cette
+        visite ? » n'aurait plus de réponse nulle part, ce qui retirerait au
+        registre la vérifiabilité qui en fait un registre.
+
+        Le visiteur, lui, n'est pas supprimé : sa fiche sert aux autres passages,
+        et ses photos de pièce relèvent de la purge (ADR-018).
+        """
+        visit = await self.get_visit(visit_id)
+
+        await self.audit.record(
+            AuditAction.VISIT_DELETED,
+            entity="visit",
+            entity_id=visit.id,
+            actor=current_user,
+            metadata={"visite": self._instantane(visit)},
+            context=self.context,
+        )
+        await self.visits.delete(visit)
+        await self.session.commit()
+
+        logger.info(
+            "Visite supprimée",
+            extra={"visit_id": str(visit_id), "acteur": str(current_user.id)},
+        )
+
+    @staticmethod
+    def _instantane(visit: Visit) -> dict[str, Any]:
+        """Contenu d'une visite, figé pour le journal avant sa suppression.
+
+        Le visiteur est nommé en clair : relire l'entrée des mois plus tard ne doit
+        pas dépendre d'un `visitor_id` dont la fiche a pu être purgée depuis.
+        """
+        return {
+            "visitor_id": visit.visitor_id,
+            "visiteur": f"{visit.visitor.prenom} {visit.visitor.nom}",
+            "numero_document": visit.visitor.numero_document,
+            "service_id": visit.service_id,
+            "agent_id": visit.agent_id,
+            "purpose_id": visit.purpose_id,
+            "motif_libre": visit.motif_libre,
+            "badge_number": visit.badge_number,
+            "statut": visit.statut,
+            "checked_in_at": visit.checked_in_at,
+            "checked_out_at": visit.checked_out_at,
+            "checked_in_by": visit.checked_in_by,
+            "checked_out_by": visit.checked_out_by,
+            "cancelled_at": visit.cancelled_at,
+            "cancellation_reason": visit.cancellation_reason,
+            "client_reference": visit.client_reference,
+        }
+
     async def export_visits(
         self, filters: VisitFilters, fmt: ExportFormat, current_user: User
     ) -> tuple[bytes, str]:

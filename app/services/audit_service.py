@@ -41,6 +41,7 @@ class AuditAction:
     VISIT_UPDATED = "visit.updated"
     VISIT_CHECKOUT = "visit.checkout"
     VISIT_CANCELLED = "visit.cancelled"
+    VISIT_DELETED = "visit.deleted"
     VISIT_EXPORTED = "visit.exported"
 
     USER_CREATED = "user.created"

@@ -8,6 +8,8 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from app.models.user import User
+from app.schemas.user import MIN_PASSWORD_LENGTH
+from app.services.user_admin_service import GENERATED_PASSWORD_LENGTH
 from tests.conftest import TEST_PASSWORD
 
 
@@ -23,7 +25,9 @@ class TestCreation:
 
         assert creation.status_code == 201
         mot_de_passe = creation.json()["mot_de_passe"]
-        assert mot_de_passe and len(mot_de_passe) >= 12
+        # Le mot de passe **généré** reste long : personne ne le retient, il n'y a
+        # donc rien à gagner à l'aligner sur le plancher de saisie manuelle.
+        assert mot_de_passe and len(mot_de_passe) == GENERATED_PASSWORD_LENGTH
 
         # Relire le compte ne doit plus jamais exposer le mot de passe.
         user_id = creation.json()["user"]["id"]
@@ -78,6 +82,49 @@ class TestCreation:
                 "identifiant": "agent044",
                 "role": "AGENT_CONTROLE",
                 "mot_de_passe": "court",
+            },
+        )
+
+        assert len("court") < MIN_PASSWORD_LENGTH
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "VALIDATION_ERROR"
+
+    async def test_le_plancher_est_de_six_caracteres(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        """Application interne : un agent d'accueil saisit ce mot de passe sur une
+        tablette plusieurs fois par jour. Six caractères pile doivent passer."""
+        assert MIN_PASSWORD_LENGTH == 6
+
+        response = await client.post(
+            "/users",
+            headers=admin_headers,
+            json={
+                "nom": "Awa Sow",
+                "identifiant": "agent045",
+                "role": "AGENT_CONTROLE",
+                "mot_de_passe": "Sigv26",
+            },
+        )
+
+        assert response.status_code == 201, response.text
+        # Et il ouvre réellement une session : la règle ne s'arrête pas au schéma.
+        connexion = await client.post(
+            "/auth/login", json={"identifiant": "agent045", "mot_de_passe": "Sigv26"}
+        )
+        assert connexion.status_code == 200, connexion.text
+
+    async def test_cinq_caracteres_restent_refuses(
+        self, client: AsyncClient, admin_headers: dict[str, str]
+    ) -> None:
+        response = await client.post(
+            "/users",
+            headers=admin_headers,
+            json={
+                "nom": "Y",
+                "identifiant": "agent046",
+                "role": "AGENT_CONTROLE",
+                "mot_de_passe": "Sigv2",
             },
         )
 

@@ -78,7 +78,7 @@ async def test_identifiant_deja_pris(base_temporaire: None) -> None:
 
 
 async def test_mot_de_passe_trop_court_refuse(base_temporaire: None) -> None:
-    with pytest.raises(ValueError, match="12 caractères"):
+    with pytest.raises(ValueError, match="6 caractères"):
         await cli.create_user("test005", mot_de_passe="court")
 
 

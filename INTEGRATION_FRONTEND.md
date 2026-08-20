@@ -408,8 +408,13 @@ POST /api/v1/users/{user_id}/reset-password
 | `{}` | Le serveur génère un mot de passe et le renvoie dans `mot_de_passe` |
 | `{"mot_de_passe": "…"}` | Le mot de passe fourni est appliqué ; la réponse renvoie `mot_de_passe: null` |
 
-**12 caractères minimum**, 128 maximum. Le `null` en réponse est normal : le serveur
+**6 caractères minimum**, 128 maximum. Le `null` en réponse est normal : le serveur
 ne restitue que ce qu'il a lui-même généré.
+
+> Le minimum est passé de 12 à 6 caractères : l'application est interne et les
+> agents saisissent leur mot de passe sur une tablette plusieurs fois par jour.
+> Si votre écran affiche encore « 12 caractères minimum », c'est à corriger.
+> Le mot de passe **généré** par le serveur, lui, fait toujours 16 caractères.
 
 Dans les deux cas, **toutes les sessions du compte sont coupées** — un mot de passe
 réinitialisé l'est souvent parce qu'il a fuité.
@@ -451,6 +456,45 @@ Deux choses à dire clairement dans l'interface :
 - Elle n'est **pas automatique** : elle s'exécute par une tâche planifiée côté
   serveur. Modifier ce réglage ne déclenche rien immédiatement.
 
+### 7.3 Supprimer définitivement une visite
+
+```http
+DELETE /api/v1/visits/{visit_id}
+Authorization: Bearer <access_token>     → 204 No Content, corps vide
+```
+
+Réservé au rôle `ADMIN`. La ligne quitte le registre **pour de bon** : elle n'est
+plus lisible par `GET /visits/{id}`, disparaît du listing, de l'export et de toutes
+les statistiques.
+
+| Réponse | Quand |
+|---|---|
+| `204` | Supprimée. Aucun corps à parser — ne tentez pas de lire du JSON |
+| `403 FORBIDDEN` | Appelée par un agent de contrôle ou un superviseur |
+| `404 VISIT_NOT_FOUND` | Identifiant inconnu, ou visite **déjà supprimée** |
+
+Le `404` du second appel est le comportement normal, pas une erreur à signaler :
+si l'utilisateur double-clique, traitez-le comme un succès.
+
+**Ne l'utilisez pas comme bouton « annuler ».** Pour une visite réelle entrée par
+erreur, c'est `POST /visits/{id}/cancel` qu'il faut appeler : la visite reste
+consultable avec son motif, sort des statistiques de la même façon, et reste
+défendable lors d'un audit. `DELETE` ne se justifie que pour ce qui n'aurait jamais
+dû exister — un enregistrement de test, un doublon manifeste.
+
+Côté interface, deux conséquences :
+
+- Placez la suppression **loin** de l'annulation, et demandez une confirmation
+  explicite. Rien ne permet de revenir en arrière.
+- Le visiteur, lui, **n'est pas supprimé** : sa fiche et ses passages précédents
+  restent. Supprimer sa seule visite ouverte le rend simplement à nouveau
+  enregistrable par `POST /visits`.
+
+L'opération laisse une entrée `visit.deleted` au journal d'audit, avec un
+instantané complet de la visite détruite (visiteur, service, horodatages, statut).
+C'est la seule trace qui subsiste : elle est visible dans
+`GET /audit-logs?action=visit.deleted`, champ `metadata.visite`.
+
 ---
 
 ## 8. Checklist d'intégration
@@ -484,6 +528,9 @@ Deux choses à dire clairement dans l'interface :
 - [ ] Réglage `document_images_retention_days` dans l'écran des paramètres
 - [ ] Afficher `document_recto_url` / `document_verso_url` sur le détail d'une visite
       (avec repli sur `mrz_image_url` pour les visites antérieures)
+- [ ] **Suppression définitive** d'une visite (`DELETE /visits/{id}`) : confirmation
+      explicite, bouton distinct de l'annulation, `404` au second appel traité
+      comme un succès
 
 ---
 
@@ -500,6 +547,8 @@ Deux choses à dire clairement dans l'interface :
 | `VALIDATION_ERROR` | 400 | `POST /uploads/document` | `face` autre que `recto`/`verso` |
 | `UNSUPPORTED_IMAGE` | 400 | `POST /uploads/document` | Extension non autorisée, ou fichier vide |
 | `FILE_TOO_LARGE` | 400 | `POST /uploads/document` | Au-delà de 10 Mo |
+| `VISIT_NOT_FOUND` | 404 | `DELETE /visits/{id}` | Identifiant inconnu, ou visite déjà supprimée |
+| `FORBIDDEN` | 403 | `DELETE /visits/{id}` | Rôle autre qu'`ADMIN` |
 
 ---
 

@@ -69,7 +69,7 @@ uv run python -m app.create_user agent007 --mot-de-passe "MotDePasseSolide2026"
 Sans `--mot-de-passe`, un mot de passe fort est généré et affiché **une seule
 fois** : seul son hash bcrypt part en base. Le script écrit dans la base désignée
 par `DATABASE_URL`, refuse un identifiant déjà pris et un mot de passe de moins de
-12 caractères.
+6 caractères.
 
 > Une fois l'API en ligne, la même opération se fait par `POST /api/v1/users`
 > depuis le dashboard. Cette commande sert surtout à l'amorçage, quand aucun
@@ -127,9 +127,15 @@ Une collection prête à l'emploi est fournie dans [`postman/`](postman/).
 2. En haut à droite, sélectionnez l'environnement **SIGV — Local**.
 3. Lancez **Auth → Login**. Les tokens sont capturés automatiquement : toutes les
    autres requêtes s'authentifient seules, rien à copier-coller.
-4. Pour **OCR MRZ → Scan MRZ**, ouvrez l'onglet **Body → form-data** et sélectionnez
-   votre photo sur la ligne `mrz_image` (type *File*). Postman ne conserve pas les
-   chemins de fichiers à l'import, c'est la seule action manuelle.
+4. Quatre requêtes envoient un fichier : ouvrez l'onglet **Body → form-data** et
+   sélectionnez votre image (type *File*). Postman ne conserve pas les chemins à
+   l'import — ce sont les seules actions manuelles.
+
+   | Requête | Champ |
+   |---|---|
+   | **OCR MRZ → Scan MRZ** | `mrz_image` — une vraie photo de pièce, sinon l'OCR échoue et la suite du fil n'a pas d'identité |
+   | **Fichiers → Déposer la signature** | `signature` |
+   | **Fichiers → Déposer le recto / le verso de la pièce** | `document` |
 
 Les requêtes se chaînent : le scan alimente l'identité du visiteur, les référentiels
 alimentent `service_id` / `agent_id` / `purpose_id`, et **Créer une visite** réutilise
@@ -138,8 +144,16 @@ Runner* — chaque requête embarque ses assertions (format d'erreur, checksums 
 présence du NIN, pagination).
 
 > Ordre conseillé : `Login` → `Services` → `Agents d'un service` → `Motifs` →
-> `Scan MRZ` → `Créer une visite` → `Lister` → `Checkout`. Gardez `Logout` pour la
+> `Scan MRZ` → `Créer une visite` → `Lister` → `Checkout` → `Retrouver un visiteur
+> déjà venu` → `Réenregistrer sans rescanner la pièce`. Gardez `Logout` pour la
 > fin : il révoque le refresh token.
+
+Le fil principal déroule le parcours complet : enregistrement au scan, clôture,
+**reprise de la fiche sans rescanner la pièce** (ADR-017), refus d'une double entrée
+(`409 VISITOR_ALREADY_PRESENT`), puis côté administration le **retrait de la personne
+rencontrée** (`agent_id: null`, ADR-019), l'annulation logique et la **suppression
+définitive** avec sa trace d'audit. Cette dernière s'exerce sur une visite créée pour
+l'occasion : le fil n'est pas détruit au passage, et la collection reste rejouable.
 
 Les six dossiers **Administration — …** couvrent le dashboard web. Ils utilisent
 `admin_access_token`, renseigné par **Auth → Login administrateur** : les deux
@@ -149,7 +163,9 @@ sessions coexistent dans l'environnement, ce qui permet de vérifier les refus
 > Pour rejouer la collection entière une seconde fois, changez
 > `nouvel_identifiant`, `nouveau_code_service` et `nouveau_motif` : ces trois
 > valeurs sont uniques en base, et les requêtes de création répondraient sinon
-> `409` à juste titre.
+> `409` à juste titre. Les deux lignes du batch hors-ligne, elles, répondent
+> `conflict` au second passage : c'est l'idempotence de `client_reference` qui
+> joue, pas une erreur.
 
 ### Points d'attention
 
@@ -282,7 +298,7 @@ chaque requête et jamais depuis la revendication `role` du JWT.
 |---|---|
 | Comptes | `GET/POST /users` · `GET/PUT /users/{id}` · `PATCH /users/{id}/status` · `POST /users/{id}/reset-password` · `POST /users/{id}/unlock` · `GET /users/{id}/sessions` · `DELETE /users/{id}/sessions/{sessionId}` |
 | Référentiels | `POST /services` · `PUT /services/{id}` · `PATCH /services/{id}/status` *(idem `agents`, `purposes`)* |
-| Visites | `PATCH /visits/{id}` · `POST /visits/{id}/cancel` · `GET /visits/export?format=csv` |
+| Visites | `PATCH /visits/{id}` · `POST /visits/{id}/cancel` · `DELETE /visits/{id}` · `GET /visits/export?format=csv` |
 | Statistiques | `GET /dashboard/stats/timeseries` · `/by-service` · `/by-purpose` · `/peak-hours` · `/avg-duration` · `/top-agents` |
 | Audit | `GET /audit-logs` · `GET /audit-logs/actions` |
 | Paramètres | `GET/PUT /settings` |

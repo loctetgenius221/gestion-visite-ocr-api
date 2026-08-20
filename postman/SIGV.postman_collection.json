@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "SIGV — Backend API",
-    "description": "Collection de test du backend SIGV (contrôle d'accès, scan MRZ).\n\n## Démarrage rapide\n\n1. Importez aussi `SIGV.postman_environment.json` et sélectionnez l'environnement **SIGV — Local**.\n2. Lancez **Auth / Login** : les tokens sont enregistrés automatiquement dans l'environnement, toutes les autres requêtes s'authentifient seules.\n3. Pour **OCR / Scan MRZ**, ouvrez l'onglet *Body* et sélectionnez votre photo dans le champ `mrz_image` (Postman ne peut pas mémoriser un chemin de fichier à l'import).\n\nLes requêtes enchaînent leurs variables : un scan alimente `visitor_*`, un service alimente `service_id`, etc. Vous pouvez donc lancer la collection entière avec le Collection Runner.",
+    "description": "Collection de test du backend SIGV (contrôle d'accès, scan MRZ).\n\n## Démarrage rapide\n\n1. Importez aussi `SIGV.postman_environment.json` et sélectionnez l'environnement **SIGV — Local**.\n2. Lancez **Auth / Login** : les tokens sont enregistrés automatiquement dans l'environnement, toutes les autres requêtes s'authentifient seules.\n3. Quatre requêtes envoient un fichier — Postman ne mémorise pas les chemins à l'import, il faut le sélectionner dans *Body → form-data* :\n   - **OCR / Scan MRZ** → champ `mrz_image` (une vraie photo de pièce, sinon l'OCR échoue et la suite du fil n'a pas d'identité)\n   - **Fichiers / Déposer la signature** → champ `signature`\n   - **Fichiers / Déposer le recto** et **le verso de la pièce** → champ `document`\n\nLes requêtes enchaînent leurs variables : un scan alimente `visitor_*`, un service alimente `service_id`, etc. Vous pouvez donc lancer la collection entière avec le Collection Runner.\n\n## Ce que le fil principal démontre\n\nEnregistrement au scan → clôture → **reprise de la fiche sans rescanner la pièce**\n(`GET /visitors` puis `POST /visits` avec `visitor_id`) → refus d'une double entrée\n(`409 VISITOR_ALREADY_PRESENT`) → corrections d'administrateur, dont le **retrait de\nla personne rencontrée** (`agent_id: null`) → annulation logique → **suppression\ndéfinitive** et sa trace d'audit.\n\nLa suppression s'exerce sur une visite créée pour l'occasion : le fil principal\nn'est pas détruit au passage, et la collection reste rejouable.\n\n## Rejouer la collection\n\nChangez `nouvel_identifiant`, `nouveau_code_service` et `nouveau_motif` : ces trois\nvaleurs sont uniques en base, et les requêtes de création répondraient sinon `409`\nà juste titre. Les deux lignes du batch hors-ligne, elles, répondent `conflict` au\nsecond passage — c'est l'idempotence de `client_reference` qui joue, pas une erreur.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -478,6 +478,162 @@
             },
             "description": "À appeler **avant** la création de visite : l'`url` retournée alimente le champ `signature_url` de `POST /visits`.\n\nSélectionnez une image dans *Body → form-data*."
           }
+        },
+        {
+          "name": "Déposer le recto de la pièce",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/document?face=recto",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "document"
+              ],
+              "query": [
+                {
+                  "key": "face",
+                  "value": "recto"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "document",
+                  "type": "file",
+                  "src": [],
+                  "description": "Photo du recto de la pièce d'identité."
+                }
+              ]
+            },
+            "description": "Dépose le **recto** de la pièce. L'`url` retournée alimente `visitor.document_recto_url` de `POST /visits`.\n\nLe recto porte la photo et des mentions absentes du verso : c'est la seule pièce justificative de ce qui a été saisi quand l'OCR échoue et que l'agent tape l'identité à la main (ADR-018).\n\nSélectionnez une image dans *Body → form-data* : Postman ne conserve pas les chemins de fichiers à l'import."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const url = pm.response.json().url;",
+                  "pm.environment.set('document_recto_url', url);",
+                  "pm.test('rangée dans documents/recto/', () => {",
+                  "  pm.expect(url).to.include('/documents/recto/');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Déposer le verso de la pièce",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/document?face=verso",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "document"
+              ],
+              "query": [
+                {
+                  "key": "face",
+                  "value": "verso"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "document",
+                  "type": "file",
+                  "src": [],
+                  "description": "Photo du verso de la pièce d'identité."
+                }
+              ]
+            },
+            "description": "Dépose le **verso** de la pièce. L'`url` retournée alimente `visitor.document_verso_url` de `POST /visits`.\n\nLe scan MRZ dépose déjà cette face — c'est le verso d'une CNI — et reporte `mrz_image_url` dans `document_verso_url` côté serveur. Cette requête ne sert donc qu'en saisie manuelle.\n\nSélectionnez une image dans *Body → form-data* : Postman ne conserve pas les chemins de fichiers à l'import."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const url = pm.response.json().url;",
+                  "pm.environment.set('document_verso_url', url);",
+                  "pm.test('rangée dans documents/verso/', () => {",
+                  "  pm.expect(url).to.include('/documents/verso/');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erreur — face invalide (400)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/uploads/document?face=dessus",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "uploads",
+                "document"
+              ],
+              "query": [
+                {
+                  "key": "face",
+                  "value": "dessus"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "document",
+                  "type": "file",
+                  "src": []
+                }
+              ]
+            },
+            "description": "`face` n'accepte que `recto` et `verso`. Aucun fichier à sélectionner : la requête est refusée avant d'arriver au stockage."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 au format standard', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().error_code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
         }
       ]
     },
@@ -640,7 +796,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"visitor\": {\n    \"prenom\": \"{{visitor_prenom}}\",\n    \"nom\": \"{{visitor_nom}}\",\n    \"type_document\": \"{{type_document}}\",\n    \"numero_document\": \"{{visitor_numero_document}}\",\n    \"nin\": \"{{visitor_nin}}\",\n    \"nationalite\": \"{{visitor_nationalite}}\",\n    \"date_naissance\": \"{{visitor_date_naissance}}\",\n    \"sexe\": \"{{visitor_sexe}}\",\n    \"date_expiration_document\": \"{{visitor_date_expiration}}\",\n    \"telephone\": \"+221770000000\",\n    \"provenance\": \"Entreprise ACME\",\n    \"mrz_image_url\": \"{{mrz_image_url}}\"\n  },\n  \"service_id\": \"{{service_id}}\",\n  \"agent_id\": \"{{agent_id}}\",\n  \"purpose_id\": \"{{purpose_id}}\",\n  \"badge_number\": \"B-042\",\n  \"signature_url\": \"{{signature_url}}\"\n}"
+              "raw": "{\n  \"visitor\": {\n    \"prenom\": \"{{visitor_prenom}}\",\n    \"nom\": \"{{visitor_nom}}\",\n    \"type_document\": \"{{type_document}}\",\n    \"numero_document\": \"{{visitor_numero_document}}\",\n    \"nin\": \"{{visitor_nin}}\",\n    \"nationalite\": \"{{visitor_nationalite}}\",\n    \"date_naissance\": \"{{visitor_date_naissance}}\",\n    \"sexe\": \"{{visitor_sexe}}\",\n    \"date_expiration_document\": \"{{visitor_date_expiration}}\",\n    \"telephone\": \"+221770000000\",\n    \"provenance\": \"Entreprise ACME\",\n    \"document_recto_url\": \"{{document_recto_url}}\",\n    \"mrz_image_url\": \"{{mrz_image_url}}\"\n  },\n  \"service_id\": \"{{service_id}}\",\n  \"agent_id\": \"{{agent_id}}\",\n  \"purpose_id\": \"{{purpose_id}}\",\n  \"badge_number\": \"B-042\",\n  \"signature_url\": \"{{signature_url}}\"\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/v1/visits",
@@ -653,7 +809,7 @@
                 "visits"
               ]
             },
-            "description": "Reprend les variables alimentées par **OCR / Scan MRZ** et les référentiels.\n\nUn motif est obligatoire : `purpose_id` **ou** `motif_libre`."
+            "description": "Reprend les variables alimentées par **OCR / Scan MRZ** et les référentiels.\n\nUn motif est obligatoire : `purpose_id` **ou** `motif_libre`.\n\n`mrz_image_url` est **déprécié** : le serveur le reporte dans `document_verso_url`, qui désigne la même face. Envoyez directement les deux `document_*_url` sur les nouveaux développements.\n\n`agent_id` est facultatif — omettez-le quand le visiteur vient au service et non à quelqu'un (ADR-019)."
           }
         },
         {
@@ -783,6 +939,192 @@
           }
         },
         {
+          "name": "Retrouver un visiteur déjà venu",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visitors?search={{visitor_nom}}&page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visitors"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "{{visitor_nom}}"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Retrouve une fiche déjà enregistrée, pour réenregistrer la personne **sans rescanner sa pièce** (ADR-017).\n\n`search` porte sur le nom, le prénom, le numéro de document ou le NIN, **trois caractères minimum**. Les numéros sont comparés compactés : « 2 K05 2012 00108 » retrouve bien `2K05201200108`.\n\nChaque fiche porte `visite_ouverte_id` quand la personne est encore présente — de quoi proposer la clôture au lieu de se heurter à un `409`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const p = pm.response.json();",
+                  "pm.test('au moins une fiche connue', () => pm.expect(p.items.length).to.be.above(0));",
+                  "const fiche = p.items[0];",
+                  "pm.environment.set('visitor_id', fiche.id);",
+                  "pm.test('la dernière venue est renseignée', () => {",
+                  "  pm.expect(fiche.derniere_visite_at).to.not.be.null;",
+                  "});",
+                  "pm.test('plus de visite ouverte après le checkout', () => {",
+                  "  pm.expect(fiche.visite_ouverte_id).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erreur — recherche trop courte (400)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visitors?search=ab",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visitors"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "ab"
+                }
+              ]
+            },
+            "description": "Deux caractères suffiraient à parcourir le fichier des visiteurs, pièces d'identité comprises : le minimum est de trois."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 au format standard', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().error_code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Réenregistrer sans rescanner la pièce",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor_id\": \"{{visitor_id}}\",\n  \"visitor_passage\": {\n    \"telephone\": \"+221771234567\",\n    \"provenance\": \"Ministère de l'Intérieur\",\n    \"immatriculation_vehicule\": \"DK-2026-AB\"\n  },\n  \"service_id\": \"{{service_id}}\",\n  \"agent_id\": \"{{agent_id}}\",\n  \"purpose_id\": \"{{purpose_id}}\",\n  \"badge_number\": \"B-043\"\n}"
+            },
+            "description": "La personne revient : sa fiche est reprise par `visitor_id`, la pièce n'est pas rescannée.\n\n`visitor` et `visitor_id` s'excluent — envoyer les deux, ou aucun des deux, donne un `400 VALIDATION_ERROR`.\n\n`visitor_passage` rafraîchit ce qui change d'une venue à l'autre : téléphone, provenance, plaque du véhicule. Ces trois champs vivent sur la fiche alors qu'ils appartiennent au passage — les recopier tels quels produirait une donnée fausse mais crédible. Un champ omis n'efface jamais une valeur connue."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "const v = pm.response.json();",
+                  "pm.environment.set('visit_id', v.id);",
+                  "pm.test('même fiche visiteur, pas de doublon', () => {",
+                  "  pm.expect(v.visitor.id).to.eql(pm.environment.get('visitor_id'));",
+                  "});",
+                  "pm.test('le passage a rafraîchi la fiche', () => {",
+                  "  pm.expect(v.visitor.telephone).to.eql('+221771234567');",
+                  "  pm.expect(v.visitor.immatriculation_vehicule).to.eql('DK-2026-AB');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erreur — visiteur déjà présent (409)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor_id\": \"{{visitor_id}}\",\n  \"visitor_passage\": {\n    \"telephone\": \"+221771234567\",\n    \"provenance\": \"Ministère de l'Intérieur\",\n    \"immatriculation_vehicule\": \"DK-2026-AB\"\n  },\n  \"service_id\": \"{{service_id}}\",\n  \"agent_id\": \"{{agent_id}}\",\n  \"purpose_id\": \"{{purpose_id}}\",\n  \"badge_number\": \"B-043\"\n}"
+            },
+            "description": "Rejoue la requête précédente : le visiteur est déjà `PRESENT`, il ne peut pas entrer une seconde fois.\n\nLes `details` portent la visite ouverte et son heure d'entrée — de quoi proposer « clôturer puis réenregistrer » plutôt qu'afficher une impasse."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('409 Conflict', () => pm.response.to.have.status(409));",
+                  "const e = pm.response.json();",
+                  "pm.test('code et détails exploitables', () => {",
+                  "  pm.expect(e.error_code).to.eql('VISITOR_ALREADY_PRESENT');",
+                  "  pm.expect(e.details.visit_id).to.eql(pm.environment.get('visit_id'));",
+                  "  pm.expect(e.details.checked_in_at).to.not.be.undefined;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Synchronisation hors-ligne (batch)",
           "event": [
             {
@@ -794,6 +1136,9 @@
                   "const b = pm.response.json();",
                   "pm.test('statut individuel par visite', () => {",
                   "  pm.expect(b.results).to.have.lengthOf(b.total);",
+                  "});",
+                  "pm.test('idempotence : rejouer ne crée pas de doublon', () => {",
+                  "  pm.expect(b.created + b.conflicts).to.eql(b.total);",
                   "});",
                   "console.log('créées', b.created, '| conflits', b.conflicts, '| erreurs', b.errors);"
                 ]
@@ -810,7 +1155,7 @@
             ],
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"visits\": [\n    {\n      \"visitor\": {\n        \"prenom\": \"Awa\",\n        \"nom\": \"Ndiaye\",\n        \"type_document\": \"CNI\",\n        \"numero_document\": \"10120010718000254\"\n      },\n      \"service_id\": \"{{service_id}}\",\n      \"agent_id\": \"{{agent_id}}\",\n      \"purpose_id\": \"{{purpose_id}}\",\n      \"client_reference\": \"offline-001\",\n      \"checked_in_at\": \"2026-08-05T09:15:00Z\"\n    }\n  ]\n}"
+              "raw": "{\n  \"visits\": [\n    {\n      \"visitor\": {\n        \"prenom\": \"Awa\",\n        \"nom\": \"Ndiaye\",\n        \"type_document\": \"CNI\",\n        \"numero_document\": \"10120010718000254\"\n      },\n      \"service_id\": \"{{service_id}}\",\n      \"agent_id\": \"{{agent_id}}\",\n      \"purpose_id\": \"{{purpose_id}}\",\n      \"client_reference\": \"offline-001\",\n      \"checked_in_at\": \"2026-08-05T09:15:00Z\"\n    },\n    {\n      \"visitor\": {\n        \"prenom\": \"Moussa\",\n        \"nom\": \"Sow\",\n        \"type_document\": \"CNI\",\n        \"numero_document\": \"10120010718000255\"\n      },\n      \"service_id\": \"{{service_id}}\",\n      \"purpose_id\": \"{{purpose_id}}\",\n      \"client_reference\": \"offline-002\",\n      \"checked_in_at\": \"2026-08-05T09:40:00Z\"\n    }\n  ]\n}"
             },
             "url": {
               "raw": "{{base_url}}/api/v1/visits/sync",
@@ -824,7 +1169,7 @@
                 "sync"
               ]
             },
-            "description": "Rejouez cette requête telle quelle : `client_reference` garantit l'idempotence, le second envoi doit remonter `conflict` sans créer de doublon."
+            "description": "Batch traité **item par item** : un doublon ou une référence invalide au milieu ne fait pas perdre les visites valides, la réponse globale reste `200` avec le détail par élément.\n\nLe second élément **omet `agent_id`** : un dépôt de dossier s'adresse au service, pas à quelqu'un (ADR-019).\n\n`client_reference` est la clé d'idempotence : rejouer la collection renvoie `conflict` sur ces deux lignes, c'est le comportement attendu."
           }
         },
         {
@@ -926,6 +1271,38 @@
           }
         },
         {
+          "name": "Readiness (base de données)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health/ready",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health",
+                "ready"
+              ]
+            },
+            "description": "`/health` dit que le processus répond ; `/health/ready` dit que la **base** répond. C'est celle-ci que doit interroger un orchestrateur ou un load balancer avant d'envoyer du trafic.",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Erreur — non authentifié (401)",
           "event": [
             {
@@ -1013,9 +1390,11 @@
                   "const b = pm.response.json();",
                   "pm.environment.set('user_id', b.user.id);",
                   "pm.environment.set('nouveau_mot_de_passe', b.mot_de_passe);",
-                  "pm.test('mot de passe genere et suffisamment long', () => {",
+                  "// Le mot de passe genere fait 16 caracteres : personne ne le retient, il n'a",
+                  "// pas a s'aligner sur le plancher de saisie manuelle, qui est de 6.",
+                  "pm.test('mot de passe genere, 16 caracteres', () => {",
                   "  pm.expect(b.mot_de_passe).to.be.a('string');",
-                  "  pm.expect(b.mot_de_passe.length).to.be.at.least(12);",
+                  "  pm.expect(b.mot_de_passe.length).to.eql(16);",
                   "});",
                   "pm.test('statut actif a la creation', () => pm.expect(b.user.status).to.eql('active'));",
                   "pm.test('aucun hash expose', () => {",
@@ -1025,6 +1404,48 @@
               }
             }
           ]
+        },
+        {
+          "name": "Erreur — mot de passe trop court (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 au format standard', () => {",
+                  "  pm.response.to.have.status(400);",
+                  "  pm.expect(pm.response.json().error_code).to.eql('VALIDATION_ERROR');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"nom\": \"Mot de passe trop court\",\n  \"identifiant\": \"{{nouvel_identifiant}}-court\",\n  \"role\": \"AGENT_CONTROLE\",\n  \"mot_de_passe\": \"Sigv2\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "users"
+              ]
+            },
+            "description": "Le plancher est de **6 caractères**, 128 au maximum : cinq sont refusés.\n\nVolontairement bas — l'application est interne et l'agent d'accueil saisit son mot de passe sur une tablette plusieurs fois par jour. Ce qui tient l'attaque en ligne est le verrouillage du compte (`max_failed_login_attempts`, 5 par défaut), pas la longueur.\n\nLe mot de passe **généré** par le serveur, lui, fait toujours 16 caractères."
+          }
         },
         {
           "name": "Lister les comptes (paginé + filtres)",
@@ -2124,6 +2545,50 @@
           ]
         },
         {
+          "name": "Retirer la personne rencontrée",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/{{visit_id}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "{{visit_id}}"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reason\": \"Personne rencontrée saisie par erreur : le visiteur venait déposer un dossier\",\n  \"agent_id\": null\n}"
+            },
+            "description": "`null` **efface** la personne rencontrée ; le champ simplement **omis** la laisse en place. La distinction ne vaut que pour `agent_id` et `purpose_id` : sur `service_id` ou `checked_in_at`, `null` est refusé en `400 VALIDATION_ERROR`.\n\nEffet sur les statistiques : la visite sort de `top-agents` et sa colonne « Personne rencontrée » se vide à l'export, mais elle continue de compter partout ailleurs."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const v = pm.response.json();",
+                  "pm.test('la personne rencontrée est retirée', () => {",
+                  "  pm.expect(v.agent).to.be.null;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
           "name": "Erreur — correction sans motif (400)",
           "request": {
             "method": "PATCH",
@@ -2385,6 +2850,114 @@
                   "pm.test('409', () => pm.response.to.have.status(409));",
                   "pm.test('conflit signale', () => {",
                   "  pm.expect(pm.response.json().error_code).to.eql('VISIT_CANCELLED');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Créer une visite jetable (pour la suppression)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"visitor\": {\n    \"prenom\": \"Saisie\",\n    \"nom\": \"Test\",\n    \"type_document\": \"CNI\",\n    \"numero_document\": \"99999999999999999\"\n  },\n  \"service_id\": \"{{service_id}}\",\n  \"purpose_id\": \"{{purpose_id}}\",\n  \"motif_libre\": \"Enregistrement de test, à supprimer\"\n}"
+            },
+            "description": "La suppression étant **définitive**, elle s'exerce ici sur une visite créée pour l'occasion : le fil principal de la collection n'est pas détruit au passage, et la séquence reste rejouable."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('201 Created', () => pm.response.to.have.status(201));",
+                  "pm.environment.set('visit_id_jetable', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Supprimer définitivement une visite",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/{{visit_id_jetable}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "{{visit_id_jetable}}"
+              ]
+            },
+            "description": "Suppression **physique** : la ligne quitte le registre pour de bon. Réservé au rôle `ADMIN`, réponse `204` sans corps — il n'y a pas de JSON à parser.\n\n**Ce n'est pas le bouton « annuler ».** Pour une visite réelle entrée par erreur, c'est `POST /visits/{id}/cancel` : elle reste consultable avec son motif, sort des statistiques de la même façon, et reste défendable en audit. `DELETE` ne se justifie que pour ce qui n'aurait jamais dû exister — un enregistrement de test, un doublon manifeste.\n\nLe visiteur, lui, n'est pas supprimé : sa fiche sert aux autres passages."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('204 No Content', () => pm.response.to.have.status(204));",
+                  "pm.test('aucun corps de réponse', () => {",
+                  "  pm.expect(pm.response.text()).to.be.empty;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Erreur — supprimer deux fois (404)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/{{visit_id_jetable}}",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "{{visit_id_jetable}}"
+              ]
+            },
+            "description": "Le second appel répond `404` : c'est le comportement normal, pas une anomalie à signaler. Si l'utilisateur double-clique, traitez-le comme un succès côté interface."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('404 au format standard', () => {",
+                  "  pm.response.to.have.status(404);",
+                  "  pm.expect(pm.response.json().error_code).to.eql('VISIT_NOT_FOUND');",
                   "});"
                 ]
               }
@@ -2843,6 +3416,62 @@
                   "pm.test('200', () => pm.response.to.have.status(200));",
                   "pm.test('liste d actions', () => {",
                   "  pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Trace de la suppression (instantané)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/api/v1/audit-logs?entity=visit&entity_id={{visit_id_jetable}}&action=visit.deleted",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "audit-logs"
+              ],
+              "query": [
+                {
+                  "key": "entity",
+                  "value": "visit"
+                },
+                {
+                  "key": "entity_id",
+                  "value": "{{visit_id_jetable}}"
+                },
+                {
+                  "key": "action",
+                  "value": "visit.deleted"
+                }
+              ]
+            },
+            "description": "La visite n'existe plus : cette entrée est la **seule** trace qui subsiste. Elle porte donc un instantané complet de ce qui a été détruit — visiteur nommé en clair, numéro de document, service, horodatages, statut — et pas seulement l'identifiant.\n\nSans lui, « que contenait cette visite ? » n'aurait plus de réponse nulle part, ce qui retirerait au registre la vérifiabilité qui en fait un registre."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const p = pm.response.json();",
+                  "pm.test('une entrée visit.deleted', () => pm.expect(p.items).to.have.lengthOf(1));",
+                  "const trace = p.items[0];",
+                  "pm.test('tracée au nom de l administrateur', () => {",
+                  "  pm.expect(trace.actor_identifiant).to.eql(pm.environment.get('admin_identifiant'));",
+                  "});",
+                  "pm.test('instantané exploitable', () => {",
+                  "  const v = trace.metadata.visite;",
+                  "  pm.expect(v.visiteur).to.eql('Saisie Test');",
+                  "  pm.expect(v.numero_document).to.eql('99999999999999999');",
+                  "  pm.expect(v.checked_in_at).to.not.be.null;",
                   "});"
                 ]
               }

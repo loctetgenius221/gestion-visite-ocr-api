@@ -45,6 +45,7 @@ ROUTES_ADMIN: list[tuple[str, str, dict | None]] = [
     ("PATCH", "/purposes/00000000-0000-0000-0000-000000000001/status", {"status": "archived"}),
     ("PATCH", "/visits/00000000-0000-0000-0000-000000000001", {"reason": "erreur", "nom": None}),
     ("POST", "/visits/00000000-0000-0000-0000-000000000001/cancel", {"reason": "doublon"}),
+    ("DELETE", "/visits/00000000-0000-0000-0000-000000000001", None),
     ("GET", "/visits/export?format=csv", None),
     ("GET", "/dashboard/stats/timeseries", None),
     ("GET", "/dashboard/stats/by-service", None),

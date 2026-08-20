@@ -253,6 +253,116 @@ class TestAnnulation:
         assert apres["presents_actuellement"] == avant["presents_actuellement"] - 1
 
 
+class TestSuppression:
+    async def test_la_visite_disparait_du_registre(
+        self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict
+    ) -> None:
+        visite = await _creer_visite(client, auth_headers, seeded)
+
+        response = await client.delete(f"/visits/{visite['id']}", headers=admin_headers)
+
+        assert response.status_code == 204
+        assert response.content == b""
+        detail = await client.get(f"/visits/{visite['id']}", headers=admin_headers)
+        assert detail.status_code == 404
+        assert detail.json()["error_code"] == "VISIT_NOT_FOUND"
+
+    async def test_supprimer_deux_fois_repond_404(
+        self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict
+    ) -> None:
+        visite = await _creer_visite(client, auth_headers, seeded)
+        await client.delete(f"/visits/{visite['id']}", headers=admin_headers)
+
+        response = await client.delete(f"/visits/{visite['id']}", headers=admin_headers)
+
+        assert response.status_code == 404
+        assert response.json()["error_code"] == "VISIT_NOT_FOUND"
+
+    async def test_un_agent_de_controle_ne_peut_pas_supprimer(
+        self, client: AsyncClient, auth_headers: dict[str, str], seeded: dict
+    ) -> None:
+        visite = await _creer_visite(client, auth_headers, seeded)
+
+        response = await client.delete(f"/visits/{visite['id']}", headers=auth_headers)
+
+        assert response.status_code == 403
+        assert response.json()["error_code"] == "FORBIDDEN"
+        # La visite est toujours là : le refus n'a rien détruit au passage.
+        detail = await client.get(f"/visits/{visite['id']}", headers=auth_headers)
+        assert detail.status_code == 200
+
+    async def test_le_journal_conserve_un_instantane_de_ce_qui_a_ete_detruit(
+        self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict
+    ) -> None:
+        """C'est la seule trace restante : elle doit répondre « que contenait-elle ? »."""
+        visite = await _creer_visite(client, auth_headers, seeded)
+
+        await client.delete(f"/visits/{visite['id']}", headers=admin_headers)
+
+        journal = await client.get(
+            f"/audit-logs?entity=visit&entity_id={visite['id']}&action=visit.deleted",
+            headers=admin_headers,
+        )
+        assert journal.status_code == 200
+        entrees = journal.json()["items"]
+        assert len(entrees) == 1
+        assert entrees[0]["actor_identifiant"] == "admin001"
+
+        instantane = entrees[0]["metadata"]["visite"]
+        assert instantane["visiteur"] == "Awa Diop"
+        assert instantane["numero_document"] == "1234567890123456"
+        assert instantane["service_id"] == str(seeded["service"].id)  # type: ignore[union-attr]
+        assert instantane["statut"] == "PRESENT"
+        assert instantane["checked_in_at"] is not None
+
+    async def test_le_visiteur_survit_a_la_suppression_de_sa_visite(
+        self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict
+    ) -> None:
+        """Sa fiche sert aux autres passages : seule la visite est détruite."""
+        visite = await _creer_visite(client, auth_headers, seeded)
+
+        await client.delete(f"/visits/{visite['id']}", headers=admin_headers)
+
+        recherche = await client.get("/visitors?search=Diop", headers=auth_headers)
+        assert recherche.status_code == 200
+        assert [v["nom"] for v in recherche.json()["items"]] == ["Diop"]
+
+    async def test_la_visite_supprimee_sort_des_statistiques(
+        self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict
+    ) -> None:
+        avant = (await client.get("/dashboard/stats", headers=auth_headers)).json()
+        visite = await _creer_visite(client, auth_headers, seeded)
+
+        await client.delete(f"/visits/{visite['id']}", headers=admin_headers)
+
+        apres = (await client.get("/dashboard/stats", headers=auth_headers)).json()
+        assert apres == avant
+
+    async def test_le_visiteur_peut_a_nouveau_entrer(
+        self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict
+    ) -> None:
+        """La visite ouverte ayant disparu, plus rien ne bloque un nouvel enregistrement."""
+        visite = await _creer_visite(client, auth_headers, seeded)
+        await client.delete(f"/visits/{visite['id']}", headers=admin_headers)
+
+        response = await client.post(
+            "/visits",
+            headers=auth_headers,
+            json={
+                "visitor": {
+                    "prenom": "Awa",
+                    "nom": "Diop",
+                    "type_document": "CNI",
+                    "numero_document": "1234567890123456",
+                },
+                "service_id": str(seeded["service"].id),  # type: ignore[union-attr]
+                "purpose_id": str(seeded["purpose"].id),  # type: ignore[union-attr]
+            },
+        )
+
+        assert response.status_code == 201
+
+
 class TestFiltresEtendus:
     async def test_filtre_par_service(
         self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict

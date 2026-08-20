@@ -79,6 +79,10 @@ def create_app() -> FastAPI:
         responses={
             400: {"model": ErrorResponse, "description": "Requête malformée"},
             401: {"model": ErrorResponse, "description": "Non authentifié"},
+            # Atteignable sur **toute** route authentifiée : un compte désactivé
+            # entre-temps est refusé ici, jeton encore valide ou non. Sur les routes
+            # d'administration s'y ajoute le rôle insuffisant.
+            403: {"model": ErrorResponse, "description": "Accès interdit"},
             404: {"model": ErrorResponse, "description": "Ressource introuvable"},
             409: {"model": ErrorResponse, "description": "Conflit"},
             422: {"model": ErrorResponse, "description": "Échec métier"},

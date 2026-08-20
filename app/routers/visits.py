@@ -192,3 +192,27 @@ async def cancel_visit(
     return VisitRead.model_validate(
         await service.cancel_visit(visit_id, payload.reason, current_admin)
     )
+
+
+@router.delete(
+    "/{visit_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Supprime définitivement une visite (administrateur)",
+)
+async def delete_visit(
+    visit_id: uuid.UUID,
+    service: VisitServiceDep,
+    current_admin: AdminUser,
+) -> None:
+    """Suppression **physique** : la visite quitte le registre pour de bon.
+
+    À réserver aux saisies qui n'auraient jamais dû exister — enregistrement de
+    test, doublon manifeste. Pour une visite réelle entrée par erreur, préférez
+    `POST /{visit_id}/cancel` : elle reste consultable avec son motif, et sort des
+    statistiques de la même façon.
+
+    L'opération est tracée par un `visit.deleted` au journal d'audit, avec un
+    instantané complet de ce qui a été détruit — c'est la seule trace qui subsiste.
+    Un second appel répond `404 VISIT_NOT_FOUND`.
+    """
+    await service.delete_visit(visit_id, current_admin)
