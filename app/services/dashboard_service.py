@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import statistics
+import uuid
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 
@@ -34,7 +35,11 @@ class DashboardService:
     def __init__(self, session: AsyncSession) -> None:
         self.visits = VisitRepository(session)
 
-    async def get_stats(self, now: datetime | None = None) -> DashboardStats:
+    async def get_stats(
+        self,
+        now: datetime | None = None,
+        organization_id: uuid.UUID | None = None,
+    ) -> DashboardStats:
         current = now or datetime.now(UTC)
         day_start = current.replace(hour=0, minute=0, second=0, microsecond=0)
         day_end = day_start + timedelta(days=1)
@@ -42,15 +47,23 @@ class DashboardService:
         # pour un poste d'accueil ouvert en continu.
         week_start = day_end - timedelta(days=7)
 
-        durations = await self.visits.closed_visits_durations_seconds(day_start, day_end)
+        durations = await self.visits.closed_visits_durations_seconds(
+            day_start, day_end, organization_id
+        )
         moyenne = round(sum(durations) / len(durations) / 60, 1) if durations else None
 
         return DashboardStats(
             date=day_start.date(),
-            visites_du_jour=await self.visits.count_checked_in_between(day_start, day_end),
-            presents_actuellement=await self.visits.count_present(),
-            sorties_du_jour=await self.visits.count_checked_out_between(day_start, day_end),
-            visites_semaine=await self.visits.count_checked_in_between(week_start, day_end),
+            visites_du_jour=await self.visits.count_checked_in_between(
+                day_start, day_end, organization_id
+            ),
+            presents_actuellement=await self.visits.count_present(organization_id),
+            sorties_du_jour=await self.visits.count_checked_out_between(
+                day_start, day_end, organization_id
+            ),
+            visites_semaine=await self.visits.count_checked_in_between(
+                week_start, day_end, organization_id
+            ),
             duree_moyenne_visite_minutes=moyenne,
         )
 
@@ -111,11 +124,16 @@ class DashboardService:
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         now: datetime | None = None,
+        organization_id: uuid.UUID | None = None,
     ) -> TimeSeriesResponse:
         period = self.resolve_period(date_from, date_to, now)
 
-        entrees = await self.visits.checkin_checkout_timestamps(period.date_from, period.date_to)
-        sorties = await self.visits.checkout_timestamps(period.date_from, period.date_to)
+        entrees = await self.visits.checkin_checkout_timestamps(
+            period.date_from, period.date_to, organization_id
+        )
+        sorties = await self.visits.checkout_timestamps(
+            period.date_from, period.date_to, organization_id
+        )
 
         compte_entrees = Counter(self._bucket(inn, granularity) for inn, _ in entrees)
         compte_sorties = Counter(self._bucket(out, granularity) for out in sorties)
@@ -138,9 +156,12 @@ class DashboardService:
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         now: datetime | None = None,
+        organization_id: uuid.UUID | None = None,
     ) -> BreakdownResponse:
         period = self.resolve_period(date_from, date_to, now)
-        lignes = await self.visits.count_by_service(period.date_from, period.date_to)
+        lignes = await self.visits.count_by_service(
+            period.date_from, period.date_to, organization_id
+        )
         return self._breakdown(period, [(sid, name, total) for sid, name, total in lignes])
 
     async def by_purpose(
@@ -148,9 +169,12 @@ class DashboardService:
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         now: datetime | None = None,
+        organization_id: uuid.UUID | None = None,
     ) -> BreakdownResponse:
         period = self.resolve_period(date_from, date_to, now)
-        lignes = await self.visits.count_by_purpose(period.date_from, period.date_to)
+        lignes = await self.visits.count_by_purpose(
+            period.date_from, period.date_to, organization_id
+        )
         return self._breakdown(
             period,
             # `purpose_id` est nullable : les visites à motif libre sont regroupées
@@ -183,9 +207,12 @@ class DashboardService:
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         now: datetime | None = None,
+        organization_id: uuid.UUID | None = None,
     ) -> PeakHoursResponse:
         period = self.resolve_period(date_from, date_to, now)
-        entrees = await self.visits.checkin_checkout_timestamps(period.date_from, period.date_to)
+        entrees = await self.visits.checkin_checkout_timestamps(
+            period.date_from, period.date_to, organization_id
+        )
         compte = Counter(inn.hour for inn, _ in entrees)
         # Les 24 heures sont toutes présentes, à zéro s'il le faut : un histogramme
         # à trous se lit mal, et le client n'a pas à compléter les manquantes.
@@ -199,10 +226,11 @@ class DashboardService:
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         now: datetime | None = None,
+        organization_id: uuid.UUID | None = None,
     ) -> AvgDurationResponse:
         period = self.resolve_period(date_from, date_to, now)
         secondes = await self.visits.closed_visits_durations_seconds(
-            period.date_from, period.date_to
+            period.date_from, period.date_to, organization_id
         )
         if not secondes:
             return AvgDurationResponse(period=period, visites_cloturees=0)
@@ -224,9 +252,12 @@ class DashboardService:
         date_from: datetime | None = None,
         date_to: datetime | None = None,
         now: datetime | None = None,
+        organization_id: uuid.UUID | None = None,
     ) -> TopAgentsResponse:
         period = self.resolve_period(date_from, date_to, now)
-        lignes = await self.visits.top_agents(period.date_from, period.date_to, limit=limit)
+        lignes = await self.visits.top_agents(
+            period.date_from, period.date_to, limit=limit, organization_id=organization_id
+        )
         return TopAgentsResponse(
             period=period,
             items=[

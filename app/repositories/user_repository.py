@@ -31,8 +31,27 @@ class UserRepository:
         await self.session.flush()
         return user
 
+    create = add
+
+    async def list_by_organization_and_roles(
+        self, organization_id: uuid.UUID, *, roles: tuple[UserRole, ...]
+    ) -> list[User]:
+        """Comptes d'une organisation portant l'un des rôles donnés, actifs ou non.
+
+        Les comptes désactivés sont inclus à dessein : l'interface doit pouvoir
+        montrer qu'il existe un administrateur à réactiver plutôt qu'à recréer.
+        """
+        stmt = (
+            select(User)
+            .where(User.organization_id == organization_id, User.role.in_(roles))
+            .order_by(User.is_active.desc(), User.nom, User.id)
+        )
+        return list((await self.session.execute(stmt)).scalars().all())
+
     @staticmethod
     def _apply_filters(stmt: Select, filters: UserFilters) -> Select:
+        if filters.organization_id is not None:
+            stmt = stmt.where(User.organization_id == filters.organization_id)
         if filters.role is not None:
             stmt = stmt.where(User.role == filters.role)
         if filters.status is not None:
@@ -62,15 +81,23 @@ class UserRepository:
         stmt = stmt.order_by(order, User.id).limit(limit).offset(offset)
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def count_active_admins(self, *, excluding: uuid.UUID | None = None) -> int:
+    async def count_active_admins(
+        self,
+        *,
+        excluding: uuid.UUID | None = None,
+        organization_id: uuid.UUID | None = None,
+        roles: tuple[UserRole, ...] = (UserRole.ADMIN,),
+    ) -> int:
         """Compte les administrateurs actifs, hors compte exclu.
 
         Sert au garde-fou anti-verrouillage : refuser de désactiver ou de
         rétrograder le dernier administrateur.
         """
         stmt = select(func.count(User.id)).where(
-            User.role == UserRole.ADMIN, User.is_active.is_(True)
+            User.role.in_(roles), User.is_active.is_(True)
         )
+        if organization_id is not None:
+            stmt = stmt.where(User.organization_id == organization_id)
         if excluding is not None:
             stmt = stmt.where(User.id != excluding)
         return (await self.session.execute(stmt)).scalar_one()

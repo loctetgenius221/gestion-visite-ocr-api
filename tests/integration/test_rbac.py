@@ -10,10 +10,24 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
+# Organisation fictive : ces requêtes ne doivent pas aboutir, seul le garde de
+# rôle est testé ici. Elles doivent en revanche être **complètes**, sans quoi le
+# refus viendrait de la validation métier et non du contrôle d'accès.
+ORGANISATION_FICTIVE = "00000000-0000-0000-0000-0000000000ff"
+
 # (méthode, chemin, corps) — chemin relatif au préfixe /api/v1.
 ROUTES_ADMIN: list[tuple[str, str, dict | None]] = [
     ("GET", "/users", None),
-    ("POST", "/users", {"nom": "X", "identifiant": "xxx001", "role": "AGENT_CONTROLE"}),
+    (
+        "POST",
+        "/users",
+        {
+            "nom": "X",
+            "identifiant": "xxx001",
+            "role": "AGENT_CONTROLE",
+            "organization_id": ORGANISATION_FICTIVE,
+        },
+    ),
     ("GET", "/users/00000000-0000-0000-0000-000000000001", None),
     ("PUT", "/users/00000000-0000-0000-0000-000000000001", {"nom": "X"}),
     ("PATCH", "/users/00000000-0000-0000-0000-000000000001/status", {"status": "inactive"}),
@@ -30,7 +44,7 @@ ROUTES_ADMIN: list[tuple[str, str, dict | None]] = [
     ("GET", "/audit-logs/actions", None),
     ("GET", "/settings", None),
     ("PUT", "/settings", {"max_failed_login_attempts": 5}),
-    ("POST", "/services", {"name": "X", "code": "XXX"}),
+    ("POST", "/services", {"name": "X", "code": "XXX", "organization_id": ORGANISATION_FICTIVE}),
     ("PUT", "/services/00000000-0000-0000-0000-000000000001", {"name": "X"}),
     ("PATCH", "/services/00000000-0000-0000-0000-000000000001/status", {"status": "archived"}),
     (
@@ -133,6 +147,7 @@ class TestRoleLuEnBase:
                 identifiant="superviseur001",
                 mot_de_passe_hash=hash_password(TEST_PASSWORD),
                 role=UserRole.SUPERVISEUR,
+                organization_id=seeded["organization"].id,  # type: ignore[union-attr]
                 is_active=True,
             )
         )

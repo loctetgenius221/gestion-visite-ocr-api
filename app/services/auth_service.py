@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import (
+    InactiveOrganizationError,
     InactiveUserError,
     InvalidCredentialsError,
     InvalidTokenError,
@@ -31,6 +32,19 @@ from app.services.audit_service import AuditAction, AuditService, ClientContext
 from app.services.setting_service import SettingService
 
 logger = get_logger(__name__)
+
+
+def _organisation_desactivee(user: User) -> bool:
+    """Le compte dépend-il d'une organisation désactivée ?
+
+    Contrôlé à chaque résolution de token, et pas seulement au login : désactiver
+    une organisation doit couper l'accès des comptes **déjà connectés**, sans quoi
+    l'opération ne prendrait effet qu'à l'expiration des sessions en cours.
+
+    L'ADMIN de plateforme n'est rattaché à aucune organisation : il n'est jamais
+    concerné, et reste donc capable de réactiver ce qu'il a désactivé.
+    """
+    return user.organization is not None and not user.organization.is_active
 
 
 class AuthService:
@@ -75,6 +89,10 @@ class AuthService:
         if not user.is_active:
             await self._tracer_echec(identifiant, raison="compte_desactive", user=user)
             raise InactiveUserError()
+
+        if _organisation_desactivee(user):
+            await self._tracer_echec(identifiant, raison="organisation_desactivee", user=user)
+            raise InactiveOrganizationError()
 
         user.failed_login_attempts = 0
         user.locked_until = None
@@ -266,4 +284,6 @@ class AuthService:
             raise InvalidTokenError()
         if not user.is_active:
             raise InactiveUserError()
+        if _organisation_desactivee(user):
+            raise InactiveOrganizationError()
         return user

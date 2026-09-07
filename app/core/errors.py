@@ -39,6 +39,18 @@ class BadRequestError(AppError):
     message = "Requête malformée."
 
 
+class OrganizationRequiredError(BadRequestError):
+    """Écriture refusée faute d'organisation de rattachement.
+
+    Volontairement un 400 et non un 403 : l'appelant a bien le droit d'écrire,
+    c'est sa requête qui est incomplète. Le dashboard doit ouvrir un sélecteur
+    d'organisation, pas afficher « accès refusé ».
+    """
+
+    error_code = "ORGANIZATION_REQUIRED"
+    message = "Une organisation de rattachement est obligatoire."
+
+
 class UnauthorizedError(AppError):
     status_code = 401
     error_code = "UNAUTHORIZED"
@@ -84,6 +96,45 @@ class InsufficientRoleError(ForbiddenError):
     message = "Cette opération est réservée aux administrateurs."
 
 
+class CrossOrganizationError(ForbiddenError):
+    """Tentative d'atteindre les données d'une autre organisation.
+
+    Distincte de `InsufficientRoleError` : le rôle est suffisant, c'est le
+    périmètre qui ne l'est pas. Le dashboard n'affiche pas le même message, et le
+    journal d'audit ne traite pas les deux cas de la même façon.
+    """
+
+    error_code = "CROSS_ORGANIZATION_FORBIDDEN"
+    message = "Accès limité à votre organisation."
+
+
+class UnscopedAccountError(ForbiddenError):
+    """Compte non-ADMIN sans organisation de rattachement.
+
+    Refusé à la porte plutôt que laissé traverser l'application avec un périmètre
+    indéfini : c'est exactement cette ambiguïté — « pas d'organisation » confondu
+    avec « toutes les organisations » — qui ouvrait les données des autres
+    structures aux agents de contrôle.
+    """
+
+    error_code = "UNSCOPED_ACCOUNT"
+    message = (
+        "Ce compte n'est rattaché à aucune organisation : "
+        "un administrateur doit le rattacher avant qu'il puisse être utilisé."
+    )
+
+
+class InactiveOrganizationError(ForbiddenError):
+    """L'organisation du compte est désactivée.
+
+    Coupe l'accès de tous ses comptes sans avoir à les désactiver un par un, et
+    sans perdre le rattachement — la réactivation rend l'accès tel qu'il était.
+    """
+
+    error_code = "INACTIVE_ORGANIZATION"
+    message = "L'organisation de ce compte est désactivée."
+
+
 class NotFoundError(AppError):
     status_code = 404
     error_code = "NOT_FOUND"
@@ -125,10 +176,30 @@ class SessionNotFoundError(NotFoundError):
     message = "Session introuvable."
 
 
+class OrganizationNotFoundError(NotFoundError):
+    error_code = "ORGANIZATION_NOT_FOUND"
+    message = "Organisation introuvable."
+
+
+class ForgottenDocumentCaseNotFoundError(NotFoundError):
+    error_code = "FORGOTTEN_DOCUMENT_CASE_NOT_FOUND"
+    message = "Fiche de pièce oubliée introuvable."
+
+
 class ConflictError(AppError):
     status_code = 409
     error_code = "CONFLICT"
     message = "Conflit avec l'état actuel de la ressource."
+
+
+class ForgottenDocumentAlreadyResolvedError(ConflictError):
+    error_code = "FORGOTTEN_DOCUMENT_ALREADY_RESOLVED"
+    message = "Cette fiche a déjà été clôturée comme résolue."
+
+
+class DuplicateOrganizationCodeError(ConflictError):
+    error_code = "DUPLICATE_ORGANIZATION_CODE"
+    message = "Une organisation avec ce code existe déjà."
 
 
 class VisitAlreadyClosedError(ConflictError):
@@ -190,6 +261,21 @@ class SelfModificationError(ConflictError):
 class LastAdminError(ConflictError):
     error_code = "LAST_ADMIN"
     message = "Ce compte est le dernier administrateur actif : il doit le rester."
+
+
+class OrganizationHasActiveVisitsError(ConflictError):
+    """Désactivation refusée tant que des visiteurs sont présents.
+
+    Désactiver couperait l'accès des agents du poste, qui ne pourraient plus
+    enregistrer la sortie des personnes encore dans les murs : le registre
+    resterait ouvert sur des visites qu'aucune route ne pourrait plus clôturer.
+    """
+
+    error_code = "ORGANIZATION_HAS_ACTIVE_VISITS"
+    message = (
+        "Des visites sont encore en cours dans cette organisation : "
+        "clôturez-les avant de la désactiver."
+    )
 
 
 class UnprocessableError(AppError):

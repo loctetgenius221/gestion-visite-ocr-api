@@ -23,7 +23,12 @@ class TestServices:
     ):
         parent: Service = seeded["service"]
         session.add(
-            Service(name="Bureau des Carrières", code="DRH-CAR", parent_id=parent.id)
+            Service(
+                name="Bureau des Carrières",
+                code="DRH-CAR",
+                parent_id=parent.id,
+                organization_id=parent.organization_id,
+            )
         )
         await session.commit()
 

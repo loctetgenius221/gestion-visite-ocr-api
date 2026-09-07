@@ -1,4 +1,4 @@
-# Guide d'intégration front — évolutions d'août 2026
+# Guide d'intégration front — évolutions de septembre 2026
 
 Destiné aux équipes **app mobile (Flutter)** et **dashboard web**.
 
@@ -18,6 +18,9 @@ Base URL : `/api/v1` · Authentification : `Authorization: Bearer <access_token>
 | 5 | Mot de passe agent saisi au lieu de généré | — | ✅ | Non, existait déjà |
 | 6 | Réglage de conservation des photos | — | ✅ | Non, additif |
 | 7 | La personne rencontrée devient facultative | ✅ | ✅ | Non, mais `agent` peut être `null` en lecture |
+| 8 | Clôture automatique des visites | — | ✅ | Additif, mais `checkout_origin` doit être affiché |
+| 9 | Suivi des pièces potentiellement oubliées | — | ✅ | Nouvelles routes et nouveaux statuts |
+| 10 | Branding et thème par organisation | — | ✅ | Nouvelles routes et champs |
 
 ### Les trois seuls points qui cassent quelque chose
 
@@ -34,6 +37,185 @@ Base URL : `/api/v1` · Authentification : `Authorization: Bearer <access_token>
    Traitez-le avant d'ouvrir la fonctionnalité aux agents.
 
 Tout le reste est additif : le code existant continue de fonctionner à l'identique.
+Les sections 8 à 10 décrivent les fonctionnalités ajoutées pour le dashboard.
+
+## 1.1 Authentification et profil
+
+### Connexion
+
+Pour l'application mobile et le dashboard, utiliser de préférence la connexion
+JSON :
+
+```http
+POST /api/v1/auth/login
+Content-Type: application/json
+```
+
+```json
+{
+  "identifiant": "admin-test",
+  "mot_de_passe": "AdminTest@2026"
+}
+```
+
+La réponse contient `access_token`, `refresh_token`, `expires_in` et le profil
+`user`. Le bearer token doit être envoyé sur les routes protégées :
+
+```http
+Authorization: Bearer <access_token>
+```
+
+`POST /api/v1/auth/token` accepte le même flux au format
+`application/x-www-form-urlencoded` avec `username` et `password`. Il est prévu
+pour Swagger/OAuth2 ; Flutter doit utiliser `/auth/login`.
+
+### Renouvellement et déconnexion
+
+```http
+POST /api/v1/auth/refresh
+Content-Type: application/json
+{ "refresh_token": "…" }
+```
+
+La réponse peut contenir un nouveau `refresh_token`. Quand il est présent, le
+client doit remplacer l'ancien immédiatement.
+
+```http
+POST /api/v1/auth/logout
+Content-Type: application/json
+{ "refresh_token": "…" }
+```
+
+Le profil courant est disponible sur les deux routes suivantes :
+
+```http
+GET /api/v1/auth/me
+GET /api/v1/me
+```
+
+Le champ `user.organization_id` est `null` pour `ADMIN` et renseigné pour les
+comptes rattachés à une organisation.
+
+## 1.2 Matrice d'autorisation et périmètre organisationnel
+
+Le frontend doit piloter les menus à partir de `user.role`, mais le backend reste
+l'autorité finale. Un appel non autorisé renvoie `403` avec
+`error_code: "FORBIDDEN"`.
+
+| Rôle | Périmètre | Accès principal |
+|---|---|---|
+| `ADMIN` | Plateforme entière | Organisations, utilisateurs, référentiels, visites, paramètres, audits, clôture automatique, pièces oubliées, branding et statistiques globales |
+| `ORG_ADMIN` | `user.organization_id` uniquement | Utilisateurs, référentiels, visites, pièces oubliées, branding et statistiques de son organisation |
+| `SUPERVISEUR` | `user.organization_id` uniquement | Opérations de visite proches de l'agent, statistiques et consultation des agents ; pas de gestion des comptes |
+| `AGENT_CONTROLE` | Opérations terrain | Référentiels en lecture, création/recherche de visiteurs, création et clôture de visites |
+
+`SUPER_ADMIN` **n'existe plus** : la valeur a été retirée de l'énumération. Elle
+n'a jamais été un rôle utilisable — le type PostgreSQL ne l'a jamais contenue. Le
+rôle global est `ADMIN`.
+
+### Le rattachement est obligatoire
+
+`ADMIN` est le **seul** rôle dont `organization_id` vaut `null` : c'est ce qui lui
+donne la vue d'ensemble. Pour tous les autres, l'organisation est obligatoire et
+le backend la refuse autrement :
+
+- créer un compte non-`ADMIN` sans `organization_id` renvoie
+  `400 ORGANIZATION_REQUIRED` — affichez un sélecteur d'organisation, pas un
+  message d'accès refusé ;
+- créer un `ADMIN` **avec** un `organization_id` renvoie `403 FORBIDDEN` ;
+- un compte non-`ADMIN` resté sans rattachement en base est refusé dès sa
+  première requête avec `403 UNSCOPED_ACCOUNT`. Si vous le rencontrez, le compte
+  est à corriger côté administration, ce n'est pas un défaut de droits.
+
+### Franchir la frontière est refusé, jamais ignoré
+
+Demander explicitement les données d'une autre organisation renvoie
+`403 CROSS_ORGANIZATION_FORBIDDEN` — distinct de `FORBIDDEN`, qui signale un rôle
+insuffisant. Le paramètre n'est pas silencieusement réécrit sur l'organisation de
+l'appelant : un filtre ignoré sans le dire donnerait l'illusion d'avoir consulté
+ce qui était demandé.
+
+Règles de sécurité à respecter côté interface :
+
+- ne jamais permettre à `ORG_ADMIN` de sélectionner une autre organisation ;
+- ne jamais afficher la gestion des comptes à `SUPERVISEUR` ou `AGENT_CONTROLE` ;
+- ne jamais proposer la création d'un `ADMIN` depuis l'interface `ORG_ADMIN` ;
+- envoyer `organization_id` pour `ORG_ADMIN`, `SUPERVISEUR` et `AGENT_CONTROLE`
+  lors de la création d'un compte ; le laisser à `null` pour `ADMIN` ;
+- pour une ressource d'une autre organisation, traiter `403` comme un accès
+  interdit, pas comme une ressource inexistante.
+
+### Ce que le cloisonnement change dans les listes
+
+Les routes suivantes ne renvoient plus que les données de l'organisation de
+l'appelant. Si votre interface s'appuyait sur une vue globale, elle changera :
+
+| Route | Avant | Maintenant |
+|---|---|---|
+| `GET /visitors` | tous les visiteurs de la plateforme | ceux **déjà venus dans l'organisation** |
+| `GET /services` | tous les services | ceux de l'organisation |
+| `GET /agents` | tout l'annuaire | l'annuaire de l'organisation |
+| `GET /purposes` | tous les motifs | motifs communs + motifs de l'organisation |
+| `GET /audit-logs` | tout le journal | le journal de l'organisation |
+| `GET /settings` | valeurs de plateforme | valeurs effectives de l'organisation |
+
+`GET /visitors` mérite une note : la fiche visiteur reste **commune** à toutes les
+structures — une même personne peut se présenter dans plusieurs — mais on ne la
+retrouve que là où elle s'est effectivement présentée. Une personne dont la seule
+visite a été supprimée disparaît donc de la recherche ; son identité est
+retrouvée au scan de sa pièce, par son numéro de document.
+
+## 1.3 Gestion des comptes utilisateurs
+
+Toutes les routes suivantes nécessitent `ADMIN` ou `ORG_ADMIN`. Les résultats
+d'un `ORG_ADMIN` sont automatiquement limités à son organisation, même si le
+client tente d'envoyer un autre filtre `organization_id`.
+
+| Méthode | Route | Usage |
+|---|---|---|
+| `GET` | `/api/v1/users` | Liste paginée (`role`, `status`, `search`, `sort`, `page`, `page_size`) |
+| `POST` | `/api/v1/users` | Créer un compte |
+| `GET` | `/api/v1/users/{user_id}` | Détail d'un compte |
+| `PUT` | `/api/v1/users/{user_id}` | Modifier nom, poste, rôle ou organisation |
+| `PATCH` | `/api/v1/users/{user_id}/status` | Activer/désactiver |
+| `POST` | `/api/v1/users/{user_id}/reset-password` | Réinitialiser le mot de passe |
+| `POST` | `/api/v1/users/{user_id}/unlock` | Lever un verrouillage |
+| `GET` | `/api/v1/users/{user_id}/sessions` | Lister les sessions actives |
+| `DELETE` | `/api/v1/users/{user_id}/sessions/{session_id}` | Révoquer une session |
+
+Exemple de création :
+
+```json
+{
+  "nom": "Awa Ndiaye",
+  "identifiant": "awa.ndiaye",
+  "organization_id": "7e21…",
+  "role": "SUPERVISEUR",
+  "poste": "Superviseure",
+  "mot_de_passe": "MotDePasseSolide2026"
+}
+```
+
+Si `mot_de_passe` est omis, le serveur le génère et le renvoie une seule fois
+dans la réponse `mot_de_passe`. Un mot de passe fourni par le frontend n'est
+jamais renvoyé en clair.
+
+Contraintes de création et de modification :
+
+- minimum du mot de passe : 6 caractères ; maximum : 128 ;
+- `ADMIN` est global et ne peut pas être rattaché à une organisation ;
+- seul `ADMIN` peut attribuer le rôle `ADMIN` ;
+- `ORG_ADMIN` peut gérer les comptes `ORG_ADMIN`, `SUPERVISEUR` et
+  `AGENT_CONTROLE` de sa propre organisation ;
+- `SUPER_ADMIN` est refusé pour les nouvelles créations et modifications ;
+- la désactivation révoque immédiatement les sessions du compte ;
+- le dernier administrateur actif ne peut pas être désactivé ou rétrogradé ;
+- un administrateur ne peut pas modifier son propre compte via ces opérations
+  sensibles.
+
+La réponse de compte expose notamment `id`, `organization_id`, `nom`,
+`identifiant`, `poste`, `role`, `is_active`, les compteurs de verrouillage et les
+dates de connexion. Elle n'expose jamais le hash du mot de passe.
 
 ---
 
@@ -456,21 +638,63 @@ Deux choses à dire clairement dans l'interface :
 - Elle n'est **pas automatique** : elle s'exécute par une tâche planifiée côté
   serveur. Modifier ce réglage ne déclenche rien immédiatement.
 
-### 7.3 Supprimer définitivement une visite
+### 7.3 Nouveau réglage : clôture automatique des visites
+
+Les mêmes routes `GET /api/v1/settings` et `PUT /api/v1/settings` exposent les
+paramètres suivants :
+
+```json
+{
+  "automatic_visit_closure_enabled": true,
+  "automatic_visit_closure_time": "17:00"
+}
+```
+
+| Champ | Type | Contraintes | Défaut |
+|---|---|---|---|
+| `automatic_visit_closure_enabled` | booléen | — | `true` |
+| `automatic_visit_closure_time` | chaîne | format strict `HH:MM`, de `00:00` à `23:59` | `"17:00"` |
+
+La mise à jour est partielle :
+
+```http
+PUT /api/v1/settings
+Content-Type: application/json
+```
+
+```json
+{
+  "automatic_visit_closure_enabled": true,
+  "automatic_visit_closure_time": "18:00"
+}
+```
+
+Le réglage est réservé aux administrateurs. Une tâche planifiée clôture les
+visites `PRESENT` entrées avant l'heure configurée. Elles deviennent `SORTI`,
+avec `checkout_origin: "AUTOMATIC"`, et une fiche de pièce potentiellement oubliée
+est créée. Les visites entrées après l'heure limite ne sont pas clôturées
+rétroactivement le même jour.
+
+L'heure est actuellement interprétée en UTC par le service de clôture. Le frontend
+doit afficher clairement le fuseau utilisé par l'environnement déployé et ne pas
+supposer silencieusement l'heure locale de l'appareil.
+
+### 7.4 Supprimer définitivement une visite
 
 ```http
 DELETE /api/v1/visits/{visit_id}
 Authorization: Bearer <access_token>     → 204 No Content, corps vide
 ```
 
-Réservé au rôle `ADMIN`. La ligne quitte le registre **pour de bon** : elle n'est
+Réservé aux rôles `ADMIN` et `ORG_ADMIN`. Un `ORG_ADMIN` ne peut agir que sur
+une visite de son organisation. La ligne quitte le registre **pour de bon** : elle n'est
 plus lisible par `GET /visits/{id}`, disparaît du listing, de l'export et de toutes
 les statistiques.
 
 | Réponse | Quand |
 |---|---|
 | `204` | Supprimée. Aucun corps à parser — ne tentez pas de lire du JSON |
-| `403 FORBIDDEN` | Appelée par un agent de contrôle ou un superviseur |
+| `403 FORBIDDEN` | Appelée par un agent, un superviseur ou hors organisation |
 | `404 VISIT_NOT_FOUND` | Identifiant inconnu, ou visite **déjà supprimée** |
 
 Le `404` du second appel est le comportement normal, pas une erreur à signaler :
@@ -497,7 +721,504 @@ C'est la seule trace qui subsiste : elle est visible dans
 
 ---
 
-## 8. Checklist d'intégration
+### 7.5 Statistiques et dashboard
+
+Le dashboard expose les routes suivantes :
+
+| Méthode | Route | Accès |
+|---|---|---|
+| `GET` | `/api/v1/dashboard/stats` | Tout compte authentifié ; données limitées à l'organisation lorsqu'elle existe |
+| `GET` | `/api/v1/dashboard/stats/timeseries` | `ADMIN`, `ORG_ADMIN`, `SUPERVISEUR` |
+| `GET` | `/api/v1/dashboard/stats/by-service` | `ADMIN`, `ORG_ADMIN`, `SUPERVISEUR` |
+| `GET` | `/api/v1/dashboard/stats/by-purpose` | `ADMIN`, `ORG_ADMIN`, `SUPERVISEUR` |
+| `GET` | `/api/v1/dashboard/stats/peak-hours` | `ADMIN`, `ORG_ADMIN`, `SUPERVISEUR` |
+| `GET` | `/api/v1/dashboard/stats/avg-duration` | `ADMIN`, `ORG_ADMIN`, `SUPERVISEUR` |
+| `GET` | `/api/v1/dashboard/stats/top-agents` | `ADMIN`, `ORG_ADMIN`, `SUPERVISEUR` |
+
+Les routes analytiques acceptent `date_from`, `date_to` et, pour la série
+temporelle, `granularity=day|week|month`. Un `SUPERVISEUR` ne doit afficher que
+les indicateurs de son organisation ; le filtrage est appliqué côté serveur.
+
+`top-agents` est un classement des personnes rencontrées et non une répartition
+exhaustive : les visites dont `agent` vaut `null` sont volontairement exclues.
+
+### 7.6 Référentiels services, agents et motifs
+
+Lecture pour tout compte authentifié :
+
+```http
+GET /api/v1/services
+GET /api/v1/services/{service_id}/agents
+GET /api/v1/agents?service_id={service_id}
+GET /api/v1/purposes
+```
+
+`ORG_ADMIN` et `SUPERVISEUR` reçoivent uniquement les services et agents de leur
+organisation. `ADMIN` peut consulter toutes les organisations. Les entrées
+archivées sont masquées par défaut ; ajouter `include_archived=true` pour les
+écrans d'administration.
+
+Écriture pour `ADMIN` et `ORG_ADMIN` :
+
+```http
+POST  /api/v1/services
+PUT   /api/v1/services/{service_id}
+PATCH /api/v1/services/{service_id}/status
+POST  /api/v1/agents
+PUT   /api/v1/agents/{agent_id}
+PATCH /api/v1/agents/{agent_id}/status
+POST  /api/v1/purposes
+PUT   /api/v1/purposes/{purpose_id}
+PATCH /api/v1/purposes/{purpose_id}/status
+```
+
+Un `ORG_ADMIN` ne peut créer, modifier ou archiver que les référentiels de son
+organisation. L'archivage est logique : aucun bouton de suppression définitive
+ne doit être prévu. Les statuts de référentiel sont `active` et `archived`.
+
+## 8. Clôture automatique et pièces oubliées
+
+### 8.1 Identifier l'origine d'une clôture
+
+`VisitRead` expose maintenant :
+
+```json
+{
+  "statut": "SORTI",
+  "checked_out_at": "2026-09-04T17:02:13+00:00",
+  "checkout_origin": "AUTOMATIC"
+}
+```
+
+Valeurs possibles :
+
+| Valeur | Signification |
+|---|---|
+| `MANUAL` | Sortie enregistrée par un utilisateur via `PUT /visits/{id}/checkout` |
+| `AUTOMATIC` | Sortie appliquée par la tâche quotidienne de clôture automatique |
+| `null` | Visite historique créée avant l'ajout de ce champ, ou visite encore `PRESENT` |
+
+Le filtre est disponible sur `GET /api/v1/visits` :
+
+```http
+GET /api/v1/visits?checkout_origin=AUTOMATIC&statut=SORTI
+```
+
+Pour le listing dédié des sorties automatiques :
+
+```http
+GET /api/v1/visits/auto-closed?date=2026-09-04&page=1&page_size=20
+```
+
+`date` est facultatif et attend `YYYY-MM-DD`. Il filtre la fenêtre
+`checked_in_at` de la visite. Le résultat est une pagination standard de
+`VisitRead`. Utilisez `checkout_origin` pour l'étiquette et le filtre
+« clôturée automatiquement » ; n'utilisez pas uniquement `statut`, car les sorties
+manuelles ont aussi le statut `SORTI`.
+
+### 8.2 Lister les fiches de pièces oubliées
+
+Une fiche est créée pour chaque visite clôturée automatiquement. Route :
+
+```http
+GET /api/v1/forgotten-document-cases
+Authorization: Bearer <access_token>
+```
+
+Paramètres disponibles :
+
+| Paramètre | Exemple | Description |
+|---|---|---|
+| `organization_id` | UUID | Filtre d'organisation ; un admin d'organisation est limité à la sienne |
+| `status` | `PENDING` | `PENDING`, `RESOLVED`, `SMS_SENT`, `SMS_FAILED` ou `NO_PHONE` |
+| `date_from` | `2026-09-01T00:00:00Z` | Date minimale de création de la fiche |
+| `date_to` | `2026-09-04T23:59:59Z` | Date maximale de création de la fiche |
+| `search` | `Diop` | Recherche sur nom, prénom ou numéro de document |
+| `page` / `page_size` | `1` / `20` | Pagination habituelle |
+
+Exemple de réponse :
+
+```json
+{
+  "items": [
+    {
+      "id": "b12f…",
+      "organization_id": "7e21…",
+      "visit_id": "9a2e…",
+      "visitor_id": "6f1c…",
+      "status": "PENDING",
+      "resolved_at": null,
+      "resolved_by": null,
+      "resolution_note": null,
+      "sms_status": null,
+      "sms_sent_at": null,
+      "created_at": "2026-09-04T17:02:13+00:00",
+      "updated_at": "2026-09-04T17:02:13+00:00",
+      "visitor": {
+        "id": "6f1c…",
+        "prenom": "Aminata",
+        "nom": "Diop",
+        "numero_document": "10120030201000558",
+        "telephone": "+221770000000"
+      },
+      "resolved_by_user": null
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 20
+}
+```
+
+Pour afficher le service et les horaires dans l'interface, récupérez la visite
+associée avec `GET /api/v1/visits/{visit_id}`. La réponse de la fiche contient
+les identifiants `visit_id` et `visitor_id`, mais pas un objet `visit` imbriqué.
+
+### 8.3 Consulter et résoudre une fiche
+
+```http
+GET /api/v1/forgotten-document-cases/{case_id}
+```
+
+Une fiche peut être marquée comme résolue lorsque la pièce a été remise ou
+restituée :
+
+```http
+POST /api/v1/forgotten-document-cases/{case_id}/resolve
+Content-Type: application/json
+```
+
+```json
+{
+  "resolution_note": "Pièce remise au visiteur après vérification."
+}
+```
+
+`resolution_note` est facultatif et limité à 500 caractères. La réponse contient
+`status: "RESOLVED"`, `resolved_at`, `resolved_by` et la note. Une deuxième
+résolution renvoie `409 FORGOTTEN_DOCUMENT_ALREADY_RESOLVED`.
+
+Les rôles authentifiés peuvent consulter et traiter les fiches. Un
+`ORG_ADMIN` ne peut accéder qu'aux fiches de son organisation ; le serveur
+retourne `403 FORBIDDEN` pour une autre organisation.
+
+### 8.4 États SMS actuellement exposés
+
+Le modèle prévoit les états `SMS_SENT`, `SMS_FAILED` et `NO_PHONE`, ainsi que
+`sms_status` et `sms_sent_at` pour une intégration future. **Aucune route
+d'envoi SMS n'est encore disponible** : ne construisez pas de bouton qui appelle
+`POST /forgotten-document-cases/{id}/send-sms` tant que ce contrat n'a pas été
+ajouté au backend.
+
+## 9. Organisations : gestion, charte graphique et logo
+
+### 9.1 Le modèle exposé
+
+```json
+{
+  "id": "7e21…",
+  "nom": "Ministère des Finances",
+  "code": "FINANCES",
+  "localisation": "Rue René Ndiaye, Dakar",
+  "description": null,
+  "contact_email": "contact@finances.gouv.sn",
+  "contact_phone": "+221 33 889 21 00",
+  "is_active": true,
+  "logo_url": "/storage/uploads/organizations/7e21…/2026/09/9f3c….png",
+  "primary_color": "#1E3A8A",
+  "secondary_color": "#0D9488",
+  "accent_color": "#F59E0B",
+  "theme_config": { "welcome_message": "Bienvenue" },
+  "created_at": "2026-09-01T08:00:00Z",
+  "updated_at": "2026-09-07T11:22:00Z"
+}
+```
+
+Les couleurs acceptent `#RGB` ou `#RRGGBB`. `contact_email` est validé comme une
+adresse. `code` accepte lettres, chiffres, tiret et souligné, et est normalisé en
+majuscules.
+
+**`logo_url` est en lecture seule.** Il ne s'écrit que par
+`POST /organizations/{id}/logo` (§9.5). L'envoyer dans un `PUT` n'a aucun effet —
+la valeur est ignorée, sans erreur. Exposé en écriture, le champ permettrait de
+faire pointer chaque écran du dashboard vers une ressource tierce.
+
+### 9.2 Mise à jour partielle : `null` efface, absent ne touche à rien
+
+`PUT /organizations/{id}` applique désormais une sémantique PATCH stricte :
+
+| Corps envoyé | Effet |
+|---|---|
+| `{"localisation": "Dakar"}` | renseigne la localisation |
+| `{"localisation": null}` | **efface** la localisation |
+| `{}` | ne change rien |
+
+C'est ce qui permet à l'interface de retirer une valeur, et pas seulement de la
+remplacer. Auparavant un `null` explicite était confondu avec un champ absent :
+aucun champ facultatif n'était effaçable une fois renseigné.
+
+`nom` et `code` font exception : un `null` y est ignoré, ils sont obligatoires.
+`is_active` n'est plus accepté ici — voir §9.4.
+
+### 9.3 Routes de gestion
+
+| Méthode | Route | Accès |
+|---|---|---|
+| `GET` | `/organizations` | `ADMIN` : tout le parc ; `ORG_ADMIN` : la sienne |
+| `POST` | `/organizations` | `ADMIN` |
+| `GET` | `/organizations/{id}` | `ADMIN` ou sa propre organisation |
+| `PUT` | `/organizations/{id}` | `ADMIN` ou sa propre organisation |
+| `PATCH` | `/organizations/{id}/status` | `ADMIN` |
+| `GET` | `/organizations/{id}/stats` | `ADMIN` ou sa propre organisation |
+| `GET` | `/organizations/{id}/theme` | `ADMIN` ou sa propre organisation |
+| `PUT` | `/organizations/{id}/theme` | `ADMIN` ou sa propre organisation |
+| `GET` | `/organizations/{id}/administrators` | `ADMIN` ou sa propre organisation |
+| `POST` | `/organizations/{id}/administrators` | `ADMIN` ou sa propre organisation |
+| `GET` | `/organizations/{id}/users` | `ADMIN` ou sa propre organisation |
+| `POST` | `/organizations/{id}/logo` | `ADMIN` ou sa propre organisation |
+| `DELETE` | `/organizations/{id}/logo` | `ADMIN` ou sa propre organisation |
+| `GET` | `/organizations/theme?code=…` | **public**, sans token |
+
+Aucune suppression n'est exposée : services, visites et comptes référencent une
+organisation en `ON DELETE RESTRICT`. La désactivation remplit ce rôle.
+
+**Liste** — `GET /organizations` accepte `search` (nom, code ou localisation),
+`is_active`, `sort` (`asc`/`desc`), `sort_by` (`nom`/`created_at`), `page` et
+`page_size`. Un `ORG_ADMIN` peut appeler la même route : il y trouve une page
+contenant sa seule organisation, ce qui évite deux écrans distincts.
+
+### 9.4 Activer et désactiver — `PATCH /organizations/{id}/status`
+
+```http
+PATCH /api/v1/organizations/{id}/status
+Content-Type: application/json
+
+{ "is_active": false, "motif": "Fin de convention" }
+```
+
+Réservé à `ADMIN`. `motif` est facultatif et part au journal d'audit.
+
+**La désactivation coupe l'accès de tous les comptes rattachés dès la requête
+suivante**, sessions déjà ouvertes comprises : un jeton encore valide est refusé
+avec `403 INACTIVE_ORGANIZATION`, et la connexion l'est aussi. Aucun compte n'est
+modifié — la réactivation rétablit l'accès tel qu'il était.
+
+L'opération est **refusée tant que des visiteurs sont présents** :
+
+```json
+{
+  "error_code": "ORGANIZATION_HAS_ACTIVE_VISITS",
+  "message": "Des visites sont encore en cours dans cette organisation : clôturez-les avant de la désactiver.",
+  "details": { "visites_en_cours": 3, "organization_id": "7e21…" }
+}
+```
+
+Les agents ne pourraient plus enregistrer les sorties, et le registre resterait
+ouvert sur des visites qu'aucune route ne saurait plus clôturer. Côté interface :
+affichez le nombre et proposez un lien vers la liste des visites en cours.
+
+Une structure désactivée disparaît aussi de la route publique de thème (§9.6).
+
+### 9.5 Logo — `POST /organizations/{id}/logo`
+
+```http
+POST /api/v1/organizations/{id}/logo
+Content-Type: multipart/form-data
+
+logo=<fichier>
+```
+
+Réponse `201` : un `OrganizationRead` complet, `logo_url` renseigné.
+
+- Formats acceptés : **PNG, JPEG, WebP, GIF**. Le format est déduit du **contenu**
+  du fichier, pas de son extension : renommer un document en `.png` ne suffit pas
+  et renvoie `400 UNSUPPORTED_IMAGE`. SVG est refusé — c'est un document XML qui
+  peut porter du script.
+- Taille maximale : **2 Mo** (`400 FILE_TOO_LARGE` au-delà).
+- L'image est réencodée en **PNG** et ramenée à **512 px** sur son plus grand
+  côté. La transparence est préservée : un logo aplati sur du blanc serait
+  inutilisable sur fond sombre.
+- L'URL change à chaque dépôt, et l'ancien fichier est supprimé. Ne mettez pas
+  `logo_url` en cache au-delà de la réponse — mais l'URL retournée est stable et
+  peut être servie avec un cache long.
+
+`DELETE /organizations/{id}/logo` efface le fichier et remet `logo_url` à `null`.
+Sans logo, la route est un no-op et répond `200`.
+
+### 9.6 Charte graphique avant connexion — `GET /organizations/theme`
+
+```http
+GET /api/v1/organizations/theme?code=MIN-INTERIEUR
+```
+
+**Aucun token requis.** C'est la seule route d'organisation ouverte, et elle
+existe pour la page de connexion : celle-ci doit porter les couleurs et le logo
+de la structure, or elle s'affiche par définition avant toute authentification.
+
+La réponse ne contient que la devanture — `id`, `nom`, `code`, `logo_url`, les
+trois couleurs, `theme_config`. Ni contact, ni statistique, ni état
+d'activation. Une organisation désactivée ou inconnue répond `404`.
+
+Après connexion, `GET /organizations/{id}/theme` renvoie les mêmes champs pour
+l'organisation de l'utilisateur.
+
+### 9.7 Administrateurs d'une organisation
+
+Nommer un administrateur n'est plus réservé à la création de la structure :
+
+```http
+POST /api/v1/organizations/{id}/administrators
+Content-Type: application/json
+
+{ "nom": "Awa Ndiaye", "identifiant": "orgadmin042", "poste": "Direction" }
+```
+
+Réponse `201` :
+
+```json
+{
+  "user": { "id": "…", "identifiant": "orgadmin042", "role": "ORG_ADMIN", "…": "…" },
+  "mot_de_passe": "K7mR-x2Qw9dTn4Vb"
+}
+```
+
+`mot_de_passe` n'est renvoyé que s'il a été **généré** par le serveur, et une
+seule fois : il n'est stocké nulle part en clair. Fournissez `mot_de_passe` dans
+la requête pour le choisir — la réponse vaut alors `null`.
+
+`GET /organizations/{id}/administrators` liste les comptes `ORG_ADMIN`, actifs en
+tête. Les comptes désactivés y figurent : mieux vaut réactiver un administrateur
+existant que d'en recréer un.
+
+`GET /organizations/{id}/users` reprend le moteur de `GET /users`, borné à la
+structure, avec `role`, `status`, `search`, `page` et `page_size`. Une
+organisation inconnue répond `404`, pas une page vide.
+
+**Garde-fou** : désactiver ou rétrograder le **dernier** `ORG_ADMIN` actif d'une
+organisation renvoie `409 LAST_ADMIN`. Le contrôle existait pour `ADMIN` mais ne
+s'appliquait pas aux administrateurs d'organisation, qui pouvaient donc
+disparaître et laisser la structure ingérable. Prévoyez le message : « nommez un
+autre administrateur avant de retirer celui-ci ».
+
+### 9.8 Réglages : plateforme ou organisation
+
+`GET /settings` renvoie les valeurs **effectives** de l'appelant, avec trois
+champs de contexte :
+
+```json
+{
+  "automatic_visit_closure_time": "20:00",
+  "automatic_visit_closure_enabled": true,
+  "visit_long_duration_alert_minutes": 120,
+  "max_failed_login_attempts": 5,
+  "…": "…",
+  "organization_id": "7e21…",
+  "scope": "organization",
+  "organization_overrides": ["automatic_visit_closure_time"]
+}
+```
+
+`organization_overrides` dit lesquels sont réellement surchargés par la
+structure ; les autres suivent la valeur de plateforme et **changeront avec
+elle**. Affichez la nuance : « suit la plateforme (17:00) » se distingue de
+« réglé sur 17:00 ».
+
+Deux portées :
+
+| Portée | Paramètres | Qui écrit |
+|---|---|---|
+| Organisation | `automatic_visit_closure_enabled`, `automatic_visit_closure_time`, `visit_long_duration_alert_minutes` | `ORG_ADMIN` pour la sienne, `ADMIN` partout |
+| Plateforme | `max_failed_login_attempts`, `account_lockout_minutes`, `visits_export_max_rows`, `document_images_retention_days` | `ADMIN` uniquement |
+
+Un `ORG_ADMIN` qui tente d'écrire un paramètre de plateforme reçoit `403`, avec
+la liste de ce qui est recevable :
+
+```json
+{
+  "error_code": "FORBIDDEN",
+  "message": "Ces paramètres relèvent de la plateforme et ne peuvent pas être réglés organisation par organisation.",
+  "details": {
+    "parametres_refuses": ["max_failed_login_attempts"],
+    "parametres_autorises": ["automatic_visit_closure_enabled", "automatic_visit_closure_time", "visit_long_duration_alert_minutes"]
+  }
+}
+```
+
+Le refus est explicite et non silencieux : croire avoir durci le verrouillage des
+comptes de toute la plateforme alors que rien n'a bougé serait pire que l'erreur.
+
+**Réaligner sur la plateforme** :
+
+```http
+DELETE /api/v1/settings/overrides/automatic_visit_closure_time
+```
+
+La structure suit de nouveau la valeur commune, **et ses évolutions futures**.
+C'est différent d'un `PUT` qui recopierait la valeur du jour : celle-ci figerait
+le réglage et la structure cesserait de bénéficier des ajustements ultérieurs.
+
+`ADMIN` peut viser une organisation avec `?organization_id=…` sur `GET`, `PUT` et
+`DELETE`.
+
+### 9.9 Journal d'audit
+
+Le journal porte désormais `organization_id`. `ORG_ADMIN` ne lit que le sien ;
+`ADMIN` voit tout, y compris les événements de plateforme (`organization_id:
+null` — échecs de connexion de comptes non rattachés, administration des
+structures).
+
+```http
+GET /api/v1/audit-logs?page=1&page_size=20
+GET /api/v1/audit-logs/actions
+```
+
+Filtres : `action` (par préfixe — `visit` ramène `visit.created`,
+`visit.cancelled`…), `entity`, `entity_id`, `actor_id`, `date_from`, `date_to`,
+et `organization_id` réservé à `ADMIN` — un `ORG_ADMIN` qui le renseigne sur une
+autre structure reçoit `403 CROSS_ORGANIZATION_FORBIDDEN`.
+
+`/audit-logs/actions` est lui aussi borné au périmètre : la seule liste des
+verbes présents renseignerait déjà sur ce qui se passe ailleurs.
+
+Nouveaux verbes : `organization.status_changed`, `organization.admin_added`,
+`organization.logo_updated`, `organization.logo_removed`.
+
+`metadata` est un objet extensible : ne construisez pas de logique dépendant
+d'une clé non documentée.
+
+### 9.10 Motifs de visite : communs ou propres
+
+`Purpose` porte maintenant `organization_id` :
+
+- `null` → motif **commun**, proposé à toutes les structures, administré par
+  `ADMIN` ;
+- renseigné → motif propre à une organisation.
+
+`GET /purposes` renvoie les deux, fusionnés. Un `ORG_ADMIN` ne peut modifier ni
+archiver un motif commun (`403 CROSS_ORGANIZATION_FORBIDDEN`) : l'archiver chez
+lui le retirerait à tout le monde. Distinguez-les visuellement dans l'écran
+d'administration.
+
+Corollaire utile : deux structures peuvent avoir un motif de même libellé, et
+deux services de même code (`DRH` existe dans chaque ministère). L'unicité est
+locale à l'organisation.
+
+### 9.11 Stratégie frontend recommandée
+
+- Charger le thème public par `code` **avant** la connexion, puis le thème
+  authentifié après.
+- Utiliser des valeurs de secours locales si `logo_url` ou une couleur vaut
+  `null`.
+- Valider `#RGB`/`#RRGGBB` côté interface, tout en traitant le
+  `400 VALIDATION_ERROR` du serveur.
+- Ne pas supposer que `theme_config` a une structure fixe : c'est un objet
+  extensible.
+- Distinguer trois `403` dans les messages : `FORBIDDEN` (rôle insuffisant),
+  `CROSS_ORGANIZATION_FORBIDDEN` (bonne permission, mauvaise structure),
+  `INACTIVE_ORGANIZATION` (structure désactivée — invitez à contacter
+  l'administrateur de la plateforme).
+
+## 10. Checklist d'intégration
 
 ### App mobile — par ordre de priorité
 
@@ -519,13 +1240,44 @@ C'est la seule trace qui subsiste : elle est visible dans
 
 ### Dashboard web
 
+- [ ] Implémenter la connexion JSON, le renouvellement du token et la déconnexion
+- [ ] Charger `/auth/me` ou `/me` au démarrage et conserver `role` +
+      `organization_id`
+- [ ] Appliquer la matrice `ADMIN` / `ORG_ADMIN` / `SUPERVISEUR` /
+      `AGENT_CONTROLE` aux menus et aux routes
+- [ ] Ne jamais proposer `SUPER_ADMIN` dans les écrans de création ou de
+      modification de compte
+- [ ] Ajouter la gestion des comptes et des sessions via `/users`
+- [ ] Ajouter les écrans de gestion des organisations, du thème et du branding
+- [ ] Ajouter les référentiels services, agents et motifs avec archivage logique
+- [ ] Ajouter les écrans de statistiques globales ou organisationnelles selon le
+      rôle
+- [ ] Ajouter le journal d'audit pour `ADMIN` et `ORG_ADMIN` ; ne pas simuler
+      un filtre d'organisation tant que le backend ne fournit pas ce périmètre
 - [ ] **Protéger tous les accès à `visit.agent`** dans le registre et l'export
 - [ ] Sélecteur de personne rencontrée facultatif, et `{"agent_id": null}` pour la
       retirer d'une visite mal saisie
 - [ ] Présenter `top-agents` comme un **palmarès**, pas une répartition : son total
       est inférieur au nombre de visites
-- [ ] Champ de saisie du mot de passe dans l'écran de réinitialisation (12 car. min)
+- [ ] Champ de saisie du mot de passe dans l'écran de réinitialisation (6 car. min,
+      128 max)
 - [ ] Réglage `document_images_retention_days` dans l'écran des paramètres
+- [ ] Réglages `automatic_visit_closure_enabled` et
+      `automatic_visit_closure_time` dans l'écran des paramètres
+- [ ] Afficher `checkout_origin` dans le registre et ajouter le filtre
+      « clôture automatique »
+- [ ] Ajouter le listing `GET /visits/auto-closed` avec filtre par date
+- [ ] Ajouter la liste des pièces oubliées via
+      `GET /forgotten-document-cases` avec filtres de statut, dates et recherche
+- [ ] Ajouter le détail et la résolution via
+      `GET /forgotten-document-cases/{id}` et
+      `POST /forgotten-document-cases/{id}/resolve`
+- [ ] Afficher les états `PENDING`, `RESOLVED`, `NO_PHONE`, `SMS_SENT` et
+      `SMS_FAILED` ; ne pas afficher d'action SMS tant que la route d'envoi n'existe
+- [ ] Charger le thème via `GET /organizations/{id}/theme` et appliquer les
+      valeurs de secours quand un champ de branding vaut `null`
+- [ ] Permettre la modification du logo, des couleurs et de `theme_config` via
+      `PUT /organizations/{id}/theme`
 - [ ] Afficher `document_recto_url` / `document_verso_url` sur le détail d'une visite
       (avec repli sur `mrz_image_url` pour les visites antérieures)
 - [ ] **Suppression définitive** d'une visite (`DELETE /visits/{id}`) : confirmation
@@ -534,7 +1286,7 @@ C'est la seule trace qui subsiste : elle est visible dans
 
 ---
 
-## 9. Récapitulatif des codes d'erreur nouveaux ou concernés
+## 11. Récapitulatif des codes d'erreur nouveaux ou concernés
 
 | Code | HTTP | Route | Quand |
 |---|---|---|---|
@@ -549,16 +1301,55 @@ C'est la seule trace qui subsiste : elle est visible dans
 | `FILE_TOO_LARGE` | 400 | `POST /uploads/document` | Au-delà de 10 Mo |
 | `VISIT_NOT_FOUND` | 404 | `DELETE /visits/{id}` | Identifiant inconnu, ou visite déjà supprimée |
 | `FORBIDDEN` | 403 | `DELETE /visits/{id}` | Rôle autre qu'`ADMIN` |
+| `FORGOTTEN_DOCUMENT_CASE_NOT_FOUND` | 404 | `/forgotten-document-cases/{id}` | Fiche inconnue |
+| `FORGOTTEN_DOCUMENT_ALREADY_RESOLVED` | 409 | `POST /forgotten-document-cases/{id}/resolve` | Fiche déjà résolue |
+| `VALIDATION_ERROR` | 400 | `PUT /settings` | Heure de clôture hors format `HH:MM` ou valeur hors contraintes |
+| `VALIDATION_ERROR` | 400 | Organisations / thème | Couleur non conforme à `#RGB` ou `#RRGGBB` |
+| `FORBIDDEN` | 403 | Routes protégées par rôle | Le rôle courant ne possède pas le niveau requis |
+| `CROSS_ORGANIZATION_FORBIDDEN` | 403 | Toute route cloisonnée | Bonne permission, mauvaise organisation. **Nouveau** : distinct de `FORBIDDEN`, le rôle est suffisant |
+| `UNSCOPED_ACCOUNT` | 403 | Toute route authentifiée | **Nouveau** : compte non-`ADMIN` sans organisation de rattachement. À corriger côté administration |
+| `INACTIVE_ORGANIZATION` | 403 | `POST /auth/login`, toute route authentifiée | **Nouveau** : l'organisation du compte est désactivée. Effet immédiat, sessions ouvertes comprises |
+| `ORGANIZATION_REQUIRED` | 400 | `POST /users`, `POST /services` | **Nouveau** : rôle ou service créé sans organisation. Affichez un sélecteur, pas un refus |
+| `ORGANIZATION_HAS_ACTIVE_VISITS` | 409 | `PATCH /organizations/{id}/status` | **Nouveau** : désactivation refusée, des visiteurs sont présents. `details.visites_en_cours` donne le nombre |
+| `ORGANIZATION_NOT_FOUND` | 404 | `/organizations/*` | Organisation inconnue, ou désactivée sur la route publique de thème |
+| `DUPLICATE_ORGANIZATION_CODE` | 409 | `POST`/`PUT /organizations` | Code déjà attribué (comparaison insensible à la casse) |
+| `UNSUPPORTED_IMAGE` | 400 | `POST /organizations/{id}/logo` | **Nouveau** : le contenu du fichier n'est pas une image PNG/JPEG/WebP/GIF, quelle que soit son extension |
+| `FILE_TOO_LARGE` | 400 | `POST /organizations/{id}/logo` | **Nouveau** : logo au-delà de 2 Mo |
+| `DUPLICATE_IDENTIFIANT` | 409 | `POST /users`, `POST /organizations/{id}/administrators` | Identifiant déjà utilisé |
+| `DUPLICATE_REFERENTIEL` | 409 | `POST /services`, `POST /purposes` | Code ou libellé déjà pris **dans cette organisation** — plus sur toute la plateforme |
+| `LAST_ADMIN` | 409 | Désactivation/rétrogradation utilisateur | Dernier `ADMIN` de la plateforme, ou dernier `ORG_ADMIN` d'une organisation |
+| `SELF_MODIFICATION_FORBIDDEN` | 409 | Administration utilisateur | Opération sensible sur son propre compte |
 
----
 
-## 10. Où trouver le reste
+## 12. Où trouver le reste
 
 - **Contrat complet et à jour** : `/docs` (Swagger) sur l'environnement de recette.
   Les nouveaux champs y sont décrits un par un.
 - **Pourquoi ces choix** : `ARCHITECTURE_DECISIONS.md`, ADR-016 (NIN alphanumérique),
   ADR-017 (réenregistrement et double présence), ADR-018 (recto/verso et conservation),
   ADR-019 (personne rencontrée facultative).
+
+### 12.1 Migration de la base
+
+Les migrations sont désormais disponibles jusqu'à la révision Alembic
+`e5b7c9d1a204`. La migration `d2f4a8b91c77` couvre la clôture automatique, les
+pièces oubliées et le branding ; `e5b7c9d1a204` ajoute la valeur
+`ORG_ADMIN` à l'ENUM des rôles. La correction récente
+concernait uniquement l'exécution PostgreSQL :
+
+- compatibilité des timestamps avec le fuseau horaire ;
+- création explicite des types ENUM PostgreSQL `checkout_origin` et
+  `forgotten_document_status`.
+
+Cette correction ne modifie pas le contrat HTTP. Le frontend n'a aucune migration
+locale à effectuer et ne doit pas manipuler directement les ENUM ou la base de
+données. Continuez à utiliser les chaînes JSON documentées (`"MANUAL"`,
+`"AUTOMATIC"`, `"PENDING"`, etc.).
+
+Les timestamps renvoyés par l'API restent des dates ISO 8601 avec décalage de
+fuseau, par exemple `2026-09-04T17:02:13+00:00`. Utilisez un parseur de date
+tenant compte du fuseau et évitez de comparer directement ces valeurs avec
+l'heure locale sans conversion explicite.
 
 Une question sur un contrat, un cas de terrain qui ne rentre pas dans ce qui est
 décrit ici : remontez-le, c'est le bon moment.

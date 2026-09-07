@@ -14,7 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.deps import CurrentUser, VisitServiceDep
+from app.core.deps import CurrentUser, Scope, VisitServiceDep
 from app.schemas.common import Page, PaginationParams
 from app.schemas.visit import VisitorSearchResult
 
@@ -36,6 +36,7 @@ def get_pagination(
 async def search_visitors(
     service: VisitServiceDep,
     current_user: CurrentUser,
+    scope: Scope,
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
     search: str = Query(
         min_length=3,
@@ -49,8 +50,15 @@ async def search_visitors(
     lettre suffirait à parcourir le fichier des visiteurs, pièces d'identité
     comprises.
 
+    La recherche est **limitée aux personnes déjà venues dans votre organisation** :
+    la fiche visiteur est commune à toutes les structures — une même personne peut
+    se présenter dans plusieurs — mais son identité n'a à être consultable que là
+    où elle s'est effectivement présentée.
+
     Chaque fiche porte `visite_ouverte_id` quand la personne est **encore présente**.
     Enregistrer une nouvelle visite dans ce cas est refusé (`VISITOR_ALREADY_PRESENT`) :
     le champ permet de proposer la clôture directement, sans passer par l'erreur.
     """
-    return await service.search_visitors(search, pagination, current_user)
+    return await service.search_visitors(
+        search, pagination, current_user, organization_id=scope.organization_id
+    )

@@ -1,4 +1,4 @@
-# Spécification technique — Backend API SIGV (Système Intelligent de Gestion des Visites)
+# Spécification technique — Backend API Fp-visites
 
 > **Note pour Claude Code** : Ce document est une spécification complète destinée à guider le développement du backend depuis zéro. Lis-le intégralement avant d'écrire la moindre ligne de code. Si un point te semble ambigu ou contradictoire, pose la question avant de faire une hypothèse silencieuse qui pourrait diverger de l'architecture attendue. Procède ensuite de manière incrémentale en suivant le plan de développement en section 11.
 
@@ -6,7 +6,7 @@
 
 ## 1. Contexte du projet
 
-SIGV est une application de contrôle d'accès pour un poste d'accueil (Ministère de la Fonction Publique, Sénégal). Un **agent de contrôle** enregistre chaque visiteur externe qui se présente :
+Fp-visites est une application de contrôle d'accès pour un poste d'accueil (Ministère de la Fonction Publique, Sénégal). Un **agent de contrôle** enregistre chaque visiteur externe qui se présente :
 
 1. Il scanne la **zone MRZ** (Machine Readable Zone) de la pièce d'identité du visiteur (CNI ou passeport) via l'app mobile Flutter.
 2. Le backend extrait automatiquement les informations d'identité (nom, prénom, numéro de document/NIN, dates, etc.) via un pipeline OCR.

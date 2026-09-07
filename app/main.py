@@ -20,7 +20,9 @@ from app.routers import (
     audit_logs,
     auth,
     dashboard,
+    forgotten_documents,
     ocr,
+    organizations,
     referentiels,
     uploads,
     users,
@@ -64,8 +66,8 @@ def create_app() -> FastAPI:
     application = FastAPI(
         title=settings.PROJECT_NAME,
         description=(
-            "API du Système Intelligent de Gestion des Visites (SIGV) — "
-            "contrôle d'accès, scan MRZ et suivi des visites."
+            "API Fp-visites — contrôle d'accès d'un poste d'accueil : "
+            "scan MRZ, registre et suivi des visites."
         ),
         version="0.1.0",
         lifespan=lifespan,
@@ -113,11 +115,17 @@ def create_app() -> FastAPI:
     application.include_router(auth.me_router, prefix=prefix)
     application.include_router(ocr.router, prefix=prefix)
     application.include_router(visits.router, prefix=prefix)
+    application.include_router(forgotten_documents.router, prefix=prefix)
     application.include_router(visitors.router, prefix=prefix)
     application.include_router(referentiels.router, prefix=prefix)
     application.include_router(dashboard.router, prefix=prefix)
     application.include_router(uploads.router, prefix=prefix)
-    # Administration (dashboard web) — chaque route est gardée par `AdminUser`.
+    # Charte graphique publique — avant le routeur d'administration, dont le
+    # chemin `/organizations/{organization_id}` capterait sinon `/theme` et le
+    # rejetterait comme un UUID malformé.
+    application.include_router(organizations.public_router, prefix=prefix)
+    # Administration (dashboard web) — chaque route porte son périmètre.
+    application.include_router(organizations.router, prefix=prefix)
     application.include_router(referentiels.admin_router, prefix=prefix)
     application.include_router(users.router, prefix=prefix)
     application.include_router(audit_logs.router, prefix=prefix)

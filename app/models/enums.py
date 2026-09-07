@@ -4,18 +4,19 @@ from enum import StrEnum
 
 
 class UserRole(StrEnum):
-    """Rôles applicatifs.
+    """Rôles applicatifs, du plus restreint au plus large.
 
-    Deux rôles portent des droits :
+    - `AGENT_CONTROLE` — application mobile, poste de contrôle de son organisation ;
+    - `SUPERVISEUR` — les mêmes opérations de terrain, plus les statistiques et
+      l'annuaire de son organisation ;
+    - `ORG_ADMIN` — administre **une** organisation : ses comptes, ses services,
+      ses agents, sa charte graphique et ses réglages d'exploitation ;
+    - `ADMIN` — administrateur de la plateforme, seul rôle non rattaché à une
+      organisation et seul à voir toutes les structures.
 
-    - `AGENT_CONTROLE` — application mobile, poste de contrôle ;
-    - `ADMIN` — dashboard web, accès global à l'API.
-
-    `SUPERVISEUR` est conservé sans droit particulier : il se comporte comme un
-    agent de contrôle. Le retirer imposerait une migration du type ENUM et une
-    élévation ou une rétrogradation des comptes existants, pour aucun gain
-    fonctionnel. Il servira d'ancrage si un rôle intermédiaire scopé par service
-    devient nécessaire.
+    Tout rôle autre qu'`ADMIN` est rattaché à une organisation : c'est ce
+    rattachement, et non le rôle, qui borne les données visibles (voir
+    `TenantScope`).
 
     Les valeurs restent en majuscules : elles sont déjà renvoyées par
     `/auth/login` et `/me` à l'application mobile en production.
@@ -23,6 +24,7 @@ class UserRole(StrEnum):
 
     AGENT_CONTROLE = "AGENT_CONTROLE"
     SUPERVISEUR = "SUPERVISEUR"
+    ORG_ADMIN = "ORG_ADMIN"
     ADMIN = "ADMIN"
 
 
@@ -72,3 +74,20 @@ class MrzFormat(StrEnum):
     TD1 = "TD1"
     TD2 = "TD2"
     TD3 = "TD3"
+
+
+class CheckoutOrigin(StrEnum):
+    """Origine de la clôture d'une visite."""
+
+    MANUAL = "MANUAL"
+    AUTOMATIC = "AUTOMATIC"
+
+
+class ForgottenDocumentStatus(StrEnum):
+    """État du suivi d'une pièce d'identité potentiellement oubliée."""
+
+    PENDING = "PENDING"
+    RESOLVED = "RESOLVED"
+    SMS_SENT = "SMS_SENT"
+    SMS_FAILED = "SMS_FAILED"
+    NO_PHONE = "NO_PHONE"

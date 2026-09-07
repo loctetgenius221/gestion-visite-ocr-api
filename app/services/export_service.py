@@ -109,4 +109,4 @@ def visits_to_csv(visits: list[Visit]) -> bytes:
 
 
 def export_filename(fmt: ExportFormat, now: datetime) -> str:
-    return f"sigv-visites-{now:%Y%m%d-%H%M}.{fmt}"
+    return f"fp-visites-{now:%Y%m%d-%H%M}.{fmt}"

@@ -8,7 +8,7 @@
 # un passage par semaine suffit largement et laisse le temps de voir un échec.
 
 [Unit]
-Description=SIGV — purge hebdomadaire des photos de pièces d'identité
+Description=Fp-visites — purge hebdomadaire des photos de pièces d'identité
 
 [Timer]
 # Lundi 03h00, hors des heures d'ouverture du poste d'accueil.

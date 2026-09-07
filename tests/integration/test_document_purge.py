@@ -51,6 +51,7 @@ async def _visiteur_avec_images(
 
     session.add(
         Visit(
+            organization_id=seeded["organization"].id,
             visitor_id=visitor.id,
             service_id=seeded["service"].id,
             agent_id=seeded["agent"].id,

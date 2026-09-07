@@ -16,11 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.errors import (
     AgentNotFoundError,
     ConflictError,
+    CrossOrganizationError,
     DuplicateReferentielError,
+    OrganizationRequiredError,
     PurposeNotFoundError,
     ServiceNotFoundError,
+    UnscopedAccountError,
 )
-from app.models.enums import RecordStatus
+from app.models.enums import RecordStatus, UserRole
 from app.models.referentiel import Agent, Purpose, Service
 from app.models.user import User
 from app.repositories.referentiel_repository import (
@@ -50,12 +53,17 @@ class ReferentielAdminService:
     # --- Services ------------------------------------------------------------
 
     async def create_service(self, payload: ServiceCreate, actor: User) -> Service:
-        existant = await self.services.get_by_code(payload.code)
+        organization_id = self._organization_for_write(payload.organization_id, actor)
+        # Le doublon se juge **dans** l'organisation : « DRH » existe dans chaque
+        # ministère, et un contrôle global interdirait à la deuxième structure
+        # d'utiliser le code naturel de son propre service.
+        existant = await self.services.get_by_code(payload.code, organization_id=organization_id)
         if existant is not None:
             raise DuplicateReferentielError(
-                "Un service porte déjà ce code.", details={"code": payload.code}
+                "Un service porte déjà ce code dans cette organisation.",
+                details={"code": payload.code},
             )
-        await self._verifier_parent(payload.parent_id)
+        await self._verifier_parent(payload.parent_id, actor=actor)
 
         service = await self.services.add(
             Service(
@@ -63,6 +71,7 @@ class ReferentielAdminService:
                 code=payload.code,
                 floor=payload.floor,
                 parent_id=payload.parent_id,
+                organization_id=organization_id,
             )
         )
         await self.audit.record(
@@ -78,11 +87,13 @@ class ReferentielAdminService:
     async def update_service(
         self, service_id: uuid.UUID, payload: ServiceUpdate, actor: User
     ) -> Service:
-        service = await self._get_service(service_id)
+        service = await self._get_service(service_id, actor)
         modifications = payload.model_dump(exclude_unset=True)
 
         if "code" in modifications and modifications["code"]:
-            autre = await self.services.get_by_code(modifications["code"])
+            autre = await self.services.get_by_code(
+                modifications["code"], organization_id=service.organization_id
+            )
             if autre is not None and autre.id != service.id:
                 raise DuplicateReferentielError(
                     "Un autre service porte déjà ce code.",
@@ -90,7 +101,9 @@ class ReferentielAdminService:
                 )
 
         if "parent_id" in modifications:
-            await self._verifier_parent(modifications["parent_id"], enfant_id=service.id)
+            await self._verifier_parent(
+                modifications["parent_id"], enfant_id=service.id, actor=actor
+            )
 
         avant = {
             "name": service.name,
@@ -123,7 +136,7 @@ class ReferentielAdminService:
     async def set_service_status(
         self, service_id: uuid.UUID, status: RecordStatus, actor: User
     ) -> Service:
-        service = await self._get_service(service_id)
+        service = await self._get_service(service_id, actor)
 
         if status is RecordStatus.ARCHIVED:
             # Archiver un service dont dépendent des agents actifs les rendrait
@@ -157,7 +170,7 @@ class ReferentielAdminService:
     # --- Agents --------------------------------------------------------------
 
     async def create_agent(self, payload: AgentCreate, actor: User) -> Agent:
-        service = await self._get_service(payload.service_id)
+        service = await self._get_service(payload.service_id, actor)
         if service.is_archived:
             raise ConflictError(
                 "Impossible de rattacher un agent à un service archivé.",
@@ -191,11 +204,11 @@ class ReferentielAdminService:
     async def update_agent(
         self, agent_id: uuid.UUID, payload: AgentUpdate, actor: User
     ) -> Agent:
-        agent = await self._get_agent(agent_id)
+        agent = await self._get_agent(agent_id, actor)
         modifications = payload.model_dump(exclude_unset=True, exclude_none=True)
 
         if "service_id" in modifications:
-            service = await self._get_service(modifications["service_id"])
+            service = await self._get_service(modifications["service_id"], actor)
             if service.is_archived:
                 raise ConflictError(
                     "Impossible de rattacher un agent à un service archivé.",
@@ -231,7 +244,7 @@ class ReferentielAdminService:
     async def set_agent_status(
         self, agent_id: uuid.UUID, status: RecordStatus, actor: User
     ) -> Agent:
-        agent = await self._get_agent(agent_id)
+        agent = await self._get_agent(agent_id, actor)
         self._appliquer_statut(agent, status)
         await self.audit.record(
             AuditAction.AGENT_STATUS_CHANGED,
@@ -246,18 +259,31 @@ class ReferentielAdminService:
     # --- Motifs --------------------------------------------------------------
 
     async def create_purpose(self, payload: PurposeCreate, actor: User) -> Purpose:
-        if await self.purposes.get_by_libelle(payload.libelle) is not None:
+        organization_id = self._organization_for_write(
+            payload.organization_id, actor, obligatoire=False
+        )
+        if (
+            await self.purposes.get_by_libelle(
+                payload.libelle, organization_id=organization_id
+            )
+            is not None
+        ):
             raise DuplicateReferentielError(
                 "Ce motif existe déjà.", details={"libelle": payload.libelle}
             )
 
-        purpose = await self.purposes.add(Purpose(libelle=payload.libelle))
+        purpose = await self.purposes.add(
+            Purpose(libelle=payload.libelle, organization_id=organization_id)
+        )
         await self.audit.record(
             AuditAction.PURPOSE_CREATED,
             entity="purpose",
             entity_id=purpose.id,
             actor=actor,
-            metadata={"libelle": purpose.libelle},
+            metadata={
+                "libelle": purpose.libelle,
+                "organization_id": str(organization_id) if organization_id else None,
+            },
         )
         await self.session.commit()
         return purpose
@@ -265,9 +291,11 @@ class ReferentielAdminService:
     async def update_purpose(
         self, purpose_id: uuid.UUID, payload: PurposeUpdate, actor: User
     ) -> Purpose:
-        purpose = await self._get_purpose(purpose_id)
+        purpose = await self._get_purpose(purpose_id, actor)
         if payload.libelle is not None and payload.libelle != purpose.libelle:
-            autre = await self.purposes.get_by_libelle(payload.libelle)
+            autre = await self.purposes.get_by_libelle(
+                payload.libelle, organization_id=purpose.organization_id
+            )
             if autre is not None and autre.id != purpose.id:
                 raise DuplicateReferentielError(
                     "Un autre motif porte déjà ce libellé.",
@@ -289,7 +317,7 @@ class ReferentielAdminService:
     async def set_purpose_status(
         self, purpose_id: uuid.UUID, status: RecordStatus, actor: User
     ) -> Purpose:
-        purpose = await self._get_purpose(purpose_id)
+        purpose = await self._get_purpose(purpose_id, actor)
         self._appliquer_statut(purpose, status)
         await self.audit.record(
             AuditAction.PURPOSE_STATUS_CHANGED,
@@ -311,26 +339,76 @@ class ReferentielAdminService:
         record.is_archived = archive
         record.archived_at = datetime.now(UTC) if archive else None
 
-    async def _get_service(self, service_id: uuid.UUID) -> Service:
+    async def _get_service(self, service_id: uuid.UUID, actor: User | None = None) -> Service:
         service = await self.services.get_by_id(service_id)
         if service is None:
             raise ServiceNotFoundError(details={"service_id": str(service_id)})
+        if (
+            actor is not None
+            and actor.role is UserRole.ORG_ADMIN
+            and service.organization_id != actor.organization_id
+        ):
+            raise CrossOrganizationError("Accès limité aux services de votre organisation.")
         return service
 
-    async def _get_agent(self, agent_id: uuid.UUID) -> Agent:
+    async def _get_agent(self, agent_id: uuid.UUID, actor: User | None = None) -> Agent:
         agent = await self.agents.get_by_id(agent_id)
         if agent is None:
             raise AgentNotFoundError(details={"agent_id": str(agent_id)})
+        if actor is not None and actor.role is UserRole.ORG_ADMIN:
+            service = await self.services.get_by_id(agent.service_id)
+            if service is None or service.organization_id != actor.organization_id:
+                raise CrossOrganizationError("Accès limité aux agents de votre organisation.")
         return agent
 
-    async def _get_purpose(self, purpose_id: uuid.UUID) -> Purpose:
+    @staticmethod
+    def _organization_for_write(
+        organization_id: uuid.UUID | None, actor: User, *, obligatoire: bool = True
+    ) -> uuid.UUID | None:
+        """Organisation dans laquelle écrire, selon le périmètre de l'acteur.
+
+        `obligatoire` distingue les référentiels rattachés — un service, et donc
+        les agents qu'il porte, appartient toujours à une structure — des motifs
+        de visite, dont `None` désigne au contraire un référentiel commun à toute
+        la plateforme. Sans ce contrôle, l'administrateur de plateforme créait des
+        services sans organisation, invisibles de tous les postes de contrôle.
+        """
+        if actor.role is UserRole.ADMIN:
+            if organization_id is None and obligatoire:
+                raise OrganizationRequiredError(
+                    "Précisez l'organisation : un service appartient toujours à une structure."
+                )
+            return organization_id
+        if actor.organization_id is None:
+            raise UnscopedAccountError()
+        if organization_id not in (None, actor.organization_id):
+            raise CrossOrganizationError()
+        return actor.organization_id
+
+    async def _get_purpose(self, purpose_id: uuid.UUID, actor: User | None = None) -> Purpose:
         purpose = await self.purposes.get_by_id(purpose_id)
         if purpose is None:
             raise PurposeNotFoundError(details={"purpose_id": str(purpose_id)})
+        # Un motif commun (`organization_id is None`) est administré par la
+        # plateforme : l'archiver depuis une organisation le retirerait à toutes
+        # les autres. L'administrateur d'organisation ne touche donc qu'aux siens.
+        if (
+            actor is not None
+            and actor.role is UserRole.ORG_ADMIN
+            and purpose.organization_id != actor.organization_id
+        ):
+            raise CrossOrganizationError(
+                "Ce motif est commun à la plateforme ou appartient à une autre "
+                "organisation : il ne peut pas être modifié ici."
+            )
         return purpose
 
     async def _verifier_parent(
-        self, parent_id: uuid.UUID | None, *, enfant_id: uuid.UUID | None = None
+        self,
+        parent_id: uuid.UUID | None,
+        *,
+        enfant_id: uuid.UUID | None = None,
+        actor: User | None = None,
     ) -> None:
         """Le parent doit exister, et ne pas appartenir au sous-arbre de l'enfant.
 
@@ -339,7 +417,7 @@ class ReferentielAdminService:
         """
         if parent_id is None:
             return
-        await self._get_service(parent_id)
+        await self._get_service(parent_id, actor)
         if enfant_id is None:
             return
         if parent_id in await self.services.descendant_ids(enfant_id):

@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
-from app.models.enums import DocumentType, Sexe, VisitStatus
+from app.models.enums import CheckoutOrigin, DocumentType, Sexe, VisitStatus
 from app.schemas.auth import UserRead
 from app.schemas.common import ORMModel
 from app.schemas.referentiel import AgentRead, PurposeRead, ServiceRead
@@ -159,6 +159,7 @@ class VisitCreate(BaseModel):
     visitor: VisitorInput | None = None
     visitor_id: uuid.UUID | None = None
     visitor_passage: VisitorPassageInput | None = None
+    organization_id: uuid.UUID | None = None
     service_id: uuid.UUID
     agent_id: uuid.UUID | None = Field(
         default=None,
@@ -207,12 +208,14 @@ class VisitCreate(BaseModel):
 
 class VisitRead(ORMModel):
     id: uuid.UUID
+    organization_id: uuid.UUID | None = None
     statut: VisitStatus
     motif_libre: str | None = None
     badge_number: str | None = None
     signature_url: str | None = None
     checked_in_at: datetime
     checked_out_at: datetime | None = None
+    checkout_origin: CheckoutOrigin | None = None
     client_reference: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -292,7 +295,9 @@ class VisitCancelRequest(BaseModel):
 
 
 class VisitFilters(BaseModel):
+    organization_id: uuid.UUID | None = None
     statut: VisitStatus | None = None
+    checkout_origin: CheckoutOrigin | None = None
     date_from: datetime | None = None
     date_to: datetime | None = None
     search: str | None = Field(default=None, max_length=100)

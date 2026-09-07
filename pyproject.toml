@@ -1,7 +1,7 @@
 [project]
-name = "sivg-backend"
+name = "fp-visites-backend"
 version = "0.1.0"
-description = "Backend API SIGV - OCR MRZ"
+description = "Backend API Fp-visites — OCR MRZ"
 readme = "README.md"
 authors = [
     { name = "Moussa Sagna", email = "sagnamoussa546@gmail.com" }

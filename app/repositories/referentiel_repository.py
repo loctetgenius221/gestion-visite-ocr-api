@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.referentiel import Agent, Purpose, Service
@@ -16,8 +16,15 @@ class ServiceRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_all(self, *, include_archived: bool = False) -> list[Service]:
+    async def list_all(
+        self,
+        *,
+        organization_id: uuid.UUID | None = None,
+        include_archived: bool = False,
+    ) -> list[Service]:
         stmt = select(Service).order_by(Service.name)
+        if organization_id is not None:
+            stmt = stmt.where(Service.organization_id == organization_id)
         if not include_archived:
             stmt = stmt.where(Service.is_archived.is_(False))
         return list((await self.session.execute(stmt)).scalars().all())
@@ -25,8 +32,15 @@ class ServiceRepository:
     async def get_by_id(self, service_id: uuid.UUID) -> Service | None:
         return await self.session.get(Service, service_id)
 
-    async def get_by_code(self, code: str) -> Service | None:
+    async def get_by_code(
+        self,
+        code: str,
+        *,
+        organization_id: uuid.UUID | None = None,
+    ) -> Service | None:
         stmt = select(Service).where(func.lower(Service.code) == code.strip().lower())
+        if organization_id is not None:
+            stmt = stmt.where(Service.organization_id == organization_id)
         return (await self.session.execute(stmt)).scalars().first()
 
     async def exists(self, service_id: uuid.UUID) -> bool:
@@ -81,11 +95,17 @@ class AgentRepository:
         self.session = session
 
     async def list_all(
-        self, service_id: uuid.UUID | None = None, *, include_archived: bool = False
+        self,
+        service_id: uuid.UUID | None = None,
+        *,
+        organization_id: uuid.UUID | None = None,
+        include_archived: bool = False,
     ) -> list[Agent]:
-        stmt = select(Agent).order_by(Agent.name)
+        stmt = select(Agent).join(Service, Agent.service_id == Service.id).order_by(Agent.name)
         if service_id is not None:
             stmt = stmt.where(Agent.service_id == service_id)
+        if organization_id is not None:
+            stmt = stmt.where(Service.organization_id == organization_id)
         if not include_archived:
             stmt = stmt.where(Agent.is_archived.is_(False))
         return list((await self.session.execute(stmt)).scalars().all())
@@ -109,8 +129,25 @@ class PurposeRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_all(self, *, include_archived: bool = False) -> list[Purpose]:
+    async def list_all(
+        self,
+        *,
+        organization_id: uuid.UUID | None = None,
+        include_archived: bool = False,
+    ) -> list[Purpose]:
+        """Motifs visibles par une organisation : les siens et les motifs communs.
+
+        `organization_id=None` ramène **tout** le référentiel : c'est la vue de
+        l'administrateur de plateforme, pas celle d'un poste de contrôle.
+        """
         stmt = select(Purpose).order_by(Purpose.libelle)
+        if organization_id is not None:
+            stmt = stmt.where(
+                or_(
+                    Purpose.organization_id == organization_id,
+                    Purpose.organization_id.is_(None),
+                )
+            )
         if not include_archived:
             stmt = stmt.where(Purpose.is_archived.is_(False))
         return list((await self.session.execute(stmt)).scalars().all())
@@ -118,8 +155,24 @@ class PurposeRepository:
     async def get_by_id(self, purpose_id: uuid.UUID) -> Purpose | None:
         return await self.session.get(Purpose, purpose_id)
 
-    async def get_by_libelle(self, libelle: str) -> Purpose | None:
+    async def get_by_libelle(
+        self, libelle: str, *, organization_id: uuid.UUID | None = None
+    ) -> Purpose | None:
+        """Doublon à l'échelle du périmètre visé, motifs communs inclus.
+
+        Un motif d'organisation ne doit pas non plus recopier un motif commun :
+        l'agent verrait deux entrées identiques dans sa liste déroulante.
+        """
         stmt = select(Purpose).where(func.lower(Purpose.libelle) == libelle.strip().lower())
+        if organization_id is not None:
+            stmt = stmt.where(
+                or_(
+                    Purpose.organization_id == organization_id,
+                    Purpose.organization_id.is_(None),
+                )
+            )
+        else:
+            stmt = stmt.where(Purpose.organization_id.is_(None))
         return (await self.session.execute(stmt)).scalars().first()
 
     async def exists(self, purpose_id: uuid.UUID) -> bool:

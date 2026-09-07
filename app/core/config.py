@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # --- Général ---
-    PROJECT_NAME: str = "SIGV Backend"
+    PROJECT_NAME: str = "Fp-visites Backend"
     ENVIRONMENT: str = "development"
     API_V1_PREFIX: str = "/api/v1"
     LOG_LEVEL: str = "INFO"
@@ -54,7 +54,7 @@ class Settings(BaseSettings):
 
     # --- Déploiement / reverse proxy ---
     # Préfixe ajouté par le proxy quand l'API n'est pas montée à la racine
-    # (ex: "/sigv"). Laissé vide dans la configuration nginx fournie.
+    # (ex: "/fp-visites"). Laissé vide dans la configuration nginx fournie.
     ROOT_PATH: str = ""
     # Noms d'hôte acceptés, séparés par des virgules. "*" désactive le contrôle ;
     # renseignez le domaine réel en production pour couper les attaques par
@@ -70,6 +70,13 @@ class Settings(BaseSettings):
     STORAGE_DIR: str = "storage/uploads"
     STORAGE_PUBLIC_BASE_URL: str = "/storage/uploads"
     MAX_UPLOAD_SIZE_MB: int = 10
+    # Un logo est une image d'interface, pas une photo de pièce : le plafond des
+    # uploads MRZ y serait dix fois trop large, et un fichier accepté est un
+    # fichier stocké puis servi à chaque chargement du dashboard.
+    MAX_LOGO_SIZE_MB: int = 2
+    # Côté le plus long du logo après normalisation. Au-delà, le dashboard
+    # redimensionnerait de toute façon à l'affichage, en payant la bande passante.
+    LOGO_MAX_DIMENSION_PX: int = 512
 
     # --- OCR ---
     OCR_USE_GPU: bool = False
@@ -103,6 +110,10 @@ class Settings(BaseSettings):
     @property
     def max_upload_size_bytes(self) -> int:
         return self.MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+    @property
+    def max_logo_size_bytes(self) -> int:
+        return self.MAX_LOGO_SIZE_MB * 1024 * 1024
 
     @property
     def is_production(self) -> bool:

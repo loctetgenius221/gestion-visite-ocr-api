@@ -41,15 +41,17 @@ import csv
 import re
 import sys
 import unicodedata
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import SessionLocal, dispose_engine
 from app.core.logging import configure_logging, get_logger
+from app.models.organization import Organization
 from app.models.referentiel import Agent, Service
 
 logger = get_logger(__name__)
@@ -108,6 +110,7 @@ class ServicePlan:
 @dataclass
 class Rapport:
     fichier: str = ""
+    organisation: str = ""
     lignes_lues: int = 0
     services_crees: list[tuple[str, str, int]] = field(default_factory=list)
     services_reutilises: list[tuple[str, str, int]] = field(default_factory=list)
@@ -324,13 +327,27 @@ async def appliquer(
     plans: list[ServicePlan],
     rapport: Rapport,
     *,
+    organization_id: uuid.UUID,
     mettre_a_jour: bool = False,
     dry_run: bool = False,
 ) -> Rapport:
-    """Crée les services et agents manquants. N'écrit rien si `dry_run`."""
+    """Crée les services et agents manquants dans une organisation.
+
+    Le rapprochement avec l'existant est borné à cette organisation : deux
+    structures ont chacune leur « DRH », et réutiliser le service d'une autre y
+    déverserait un annuaire étranger.
+    """
     rapport.dry_run = dry_run
 
-    services_bd = list((await session.execute(select(Service))).scalars().all())
+    services_bd = list(
+        (
+            await session.execute(
+                select(Service).where(Service.organization_id == organization_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     par_code = {service.code.casefold(): service for service in services_bd}
     par_nom = {normalise(service.name): service for service in services_bd}
     codes_pris = set(par_code)
@@ -349,7 +366,17 @@ async def appliquer(
             plan.code = _code_libre(plan.code, codes_pris)
             codes_pris.add(plan.code.casefold())
 
-    agents_bd = (await session.execute(select(Agent))).scalars().all()
+    agents_bd = (
+        (
+            await session.execute(
+                select(Agent)
+                .join(Service, Agent.service_id == Service.id)
+                .where(Service.organization_id == organization_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     connus = {(agent.service_id, normalise(agent.name)): agent for agent in agents_bd}
 
     a_creer: list[tuple[ServicePlan, Agent]] = []
@@ -386,7 +413,9 @@ async def appliquer(
 
     for plan in plans:
         if plan.existant is None:
-            plan.existant = Service(code=plan.code, name=plan.nom)
+            plan.existant = Service(
+                code=plan.code, name=plan.nom, organization_id=organization_id
+            )
             session.add(plan.existant)
     # Les services doivent porter leur identifiant avant que les agents ne s'y
     # rattachent : `agents.service_id` est NOT NULL.
@@ -404,6 +433,7 @@ async def appliquer(
 async def importer(
     chemin: Path,
     *,
+    organisation: str,
     encoding: str = "utf-8-sig",
     delimiteur: str = ",",
     service_defaut: str = CODE_SERVICE_DEFAUT,
@@ -411,7 +441,7 @@ async def importer(
     mettre_a_jour: bool = False,
     dry_run: bool = False,
 ) -> Rapport:
-    """Importe l'annuaire dans la base configurée par `DATABASE_URL`."""
+    """Importe l'annuaire d'une organisation, désignée par son code."""
     lignes, rapport = lire_csv(chemin, encoding=encoding, delimiteur=delimiteur)
     plans = construire_plans(
         lignes,
@@ -420,8 +450,26 @@ async def importer(
         ignorer_sans_service=ignorer_sans_service,
     )
     async with SessionLocal() as session:
+        organization = (
+            await session.execute(
+                select(Organization).where(
+                    func.lower(Organization.code) == organisation.strip().lower()
+                )
+            )
+        ).scalar_one_or_none()
+        if organization is None:
+            raise ImportError_(
+                f"Aucune organisation ne porte le code « {organisation} ». "
+                "Créez-la d'abord depuis le dashboard."
+            )
+        rapport.organisation = organization.code
         return await appliquer(
-            session, plans, rapport, mettre_a_jour=mettre_a_jour, dry_run=dry_run
+            session,
+            plans,
+            rapport,
+            organization_id=organization.id,
+            mettre_a_jour=mettre_a_jour,
+            dry_run=dry_run,
         )
 
 
@@ -439,6 +487,14 @@ def _parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument("csv", type=Path, help="Chemin du fichier CSV de l'annuaire.")
+    parser.add_argument(
+        "--organisation",
+        required=True,
+        help=(
+            "Code de l'organisation qui reçoit l'annuaire (ex: MIN-INTERIEUR). "
+            "Un service appartient toujours à une structure."
+        ),
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -482,6 +538,7 @@ def _affiche(rapport: Rapport) -> None:
     total_services = len(rapport.services_crees) + len(rapport.services_reutilises)
     print(f"Import de l'annuaire sur {settings.ENVIRONMENT}")
     print(f"  fichier            : {rapport.fichier}")
+    print(f"  organisation       : {rapport.organisation or '—'}")
     print(f"  lignes lues        : {rapport.lignes_lues}")
     print(f"  services           : {total_services} ({len(rapport.services_crees)} à créer)")
     print(f"  agents créés       : {rapport.agents_crees}")
@@ -541,6 +598,7 @@ async def main(argv: list[str] | None = None) -> int:
     try:
         rapport = await importer(
             args.csv,
+            organisation=args.organisation,
             encoding=args.encoding,
             delimiteur=args.delimiteur,
             service_defaut=args.service_defaut,

@@ -1,7 +1,16 @@
 # Déploiement sur VPS
 
-Mise en production du backend SIGV en installation native : PostgreSQL, l'API
+Mise en production du backend Fp-visites en installation native : PostgreSQL, l'API
 sous systemd, et Nginx en terminaison TLS et serveur de fichiers.
+
+> **Nom des ressources système.** L'application s'appelle désormais *Fp-visites*,
+> mais l'utilisateur Linux, la base PostgreSQL, les unités systemd
+> (`sigv-api.service`…) et les fichiers nginx gardent volontairement le préfixe
+> `sigv`, hérité du nom précédent. Ce sont des identifiants d'infrastructure :
+> les renommer imposerait, sur une machine déjà installée, de recréer
+> l'utilisateur, de basculer la base et de redéployer les unités — pour un gain
+> nul côté utilisateur, qui ne les voit jamais. Les libellés affichés
+> (`systemctl status`, titre de l'API, exports) portent, eux, le nouveau nom.
 
 ```
                  :443                     127.0.0.1:8000              :5432
@@ -110,6 +119,8 @@ uv run alembic upgrade head
 
 # Référentiels et comptes agents — SEED_AGENT_PASSWORD doit être renseigné,
 # faire au moins 12 caractères et différer du mot de passe de démonstration.
+# Crée aussi l'organisation `MIN-INTERIEUR`, à laquelle tous les comptes sont
+# rattachés sauf `admin001` : `ADMIN` est le seul rôle global de la plateforme.
 uv run python -m app.seeds
 
 # Télécharge les modèles PaddleOCR (~500 Mo) maintenant plutôt qu'au premier scan
@@ -129,12 +140,17 @@ install -o sigv -g sigv -m 600 annuaire.csv /home/sigv/annuaire.csv
 # Toujours en simulation d'abord : le rapport montre les services qui seraient
 # créés, ceux qui seraient réutilisés et les libellés fusionnés.
 sudo -u sigv /home/sigv/sigv-backend/.venv/bin/python -m app.import_annuaire \
-    /home/sigv/annuaire.csv --dry-run
+    /home/sigv/annuaire.csv --organisation MIN-INTERIEUR --dry-run
 
 # Puis en réel
 sudo -u sigv /home/sigv/sigv-backend/.venv/bin/python -m app.import_annuaire \
-    /home/sigv/annuaire.csv
+    /home/sigv/annuaire.csv --organisation MIN-INTERIEUR
 ```
+
+`--organisation` désigne la structure qui reçoit l'annuaire, par son code. Un
+service appartient toujours à une organisation, et le rapprochement avec
+l'existant est borné à celle-ci : deux ministères ont chacun leur « DRH », et
+réutiliser celui du voisin y déverserait un annuaire étranger.
 
 Le script est idempotent : à chaque nouvelle version de l'annuaire, relancez-le
 sur le CSV complet. Il n'ajoute que ce qui manque, ne renomme pas les services
@@ -165,6 +181,45 @@ journalctl -u sigv-api -f          # logs JSON de l'application
 
 Le service joue `alembic upgrade head` avant chaque démarrage : le schéma suit
 toujours le code déployé.
+
+### Clôture automatique des visites
+
+Une visite oubliée en `PRESENT` fausse le registre et les statistiques, et masque
+la pièce d'identité qu'un visiteur a laissée au poste. Un timer clôture chaque
+soir ce qui traîne, et ouvre une fiche « pièce potentiellement oubliée ».
+
+Mesurez d'abord ce qui serait clôturé — la commande ne touche à rien :
+
+```bash
+sudo -u sigv /home/sigv/sigv-backend/.venv/bin/python -m app.auto_close_visits --dry-run
+```
+
+Puis activez le timer :
+
+```bash
+cp /home/sigv/sigv-backend/deploy/systemd/sigv-auto-close-visits.service /etc/systemd/system/
+cp /home/sigv/sigv-backend/deploy/systemd/sigv-auto-close-visits.timer   /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now sigv-auto-close-visits.timer
+
+systemctl list-timers sigv-auto-close-visits.timer   # prochaine exécution
+journalctl -u sigv-auto-close-visits                 # résultat des exécutions
+```
+
+Le timer se déclenche **toutes les cinq minutes**, et non une fois par jour à
+heure fixe. L'heure de clôture est un réglage **par organisation**
+(`automatic_visit_closure_time`, 17:00 par défaut), que chaque administrateur de
+structure modifie depuis le dashboard : un timer calé sur une heure unique
+obligerait à éditer l'unité systemd à chaque changement, et ne saurait pas servir
+deux structures aux horaires différents.
+
+Le coût de ces réveils est nul : la commande sort immédiatement si l'heure d'une
+organisation n'est pas atteinte, et la table `automatic_closure_runs` porte une
+contrainte d'unicité sur `(organisation, date)` — une seconde exécution le même
+jour est un no-op tracé, y compris en cas de relance ou de concurrence.
+
+Les organisations désactivées sont écartées : leurs comptes n'ont plus accès à
+l'API, clôturer leurs visites au nom de personne n'aurait pas de sens.
 
 ### Purge des photos de pièces d'identité
 

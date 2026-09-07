@@ -61,6 +61,17 @@ class AuditAction:
     PURPOSE_UPDATED = "purpose.updated"
     PURPOSE_STATUS_CHANGED = "purpose.status_changed"
 
+    ORGANIZATION_CREATED = "organization.created"
+    ORGANIZATION_UPDATED = "organization.updated"
+    ORGANIZATION_STATUS_CHANGED = "organization.status_changed"
+    ORGANIZATION_ADMIN_ADDED = "organization.admin_added"
+    ORGANIZATION_LOGO_UPDATED = "organization.logo_updated"
+    ORGANIZATION_LOGO_REMOVED = "organization.logo_removed"
+
+    VISIT_AUTO_CLOSED = "visit.auto_closed"
+    FORGOTTEN_DOC_CREATED = "forgotten_document.created"
+    FORGOTTEN_DOC_RESOLVED = "forgotten_document.resolved"
+
     SETTINGS_UPDATED = "settings.updated"
 
 
@@ -114,12 +125,22 @@ class AuditService:
         entity_id: str | uuid.UUID | None = None,
         actor: User | None = None,
         actor_identifiant: str | None = None,
+        organization_id: uuid.UUID | None = None,
         metadata: dict[str, Any] | None = None,
         context: ClientContext | None = None,
     ) -> AuditLog:
-        """Enregistre un événement. Ne committe pas : l'appelant maîtrise sa transaction."""
+        """Enregistre un événement. Ne committe pas : l'appelant maîtrise sa transaction.
+
+        `organization_id` explicite l'emporte sur celle de l'acteur : quand
+        l'administrateur de plateforme agit **sur** une organisation, la trace doit
+        apparaître dans le journal de cette organisation, pas dans un journal
+        global que son administrateur ne verra jamais.
+        """
+        if organization_id is None and actor is not None:
+            organization_id = actor.organization_id
         return await self.logs.add(
             AuditLog(
+                organization_id=organization_id,
                 actor_id=actor.id if actor is not None else None,
                 actor_identifiant=(
                     actor_identifiant
@@ -148,8 +169,8 @@ class AuditService:
             page_size=pagination.page_size,
         )
 
-    async def list_actions(self) -> list[str]:
-        return await self.logs.distinct_actions()
+    async def list_actions(self, *, organization_id: uuid.UUID | None = None) -> list[str]:
+        return await self.logs.distinct_actions(organization_id=organization_id)
 
 
 def now() -> datetime:

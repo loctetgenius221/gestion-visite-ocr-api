@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, Uuid
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin, utcnow
-from app.models.enums import VisitStatus
+from app.models.enums import CheckoutOrigin, VisitStatus
 from app.models.referentiel import Agent, Purpose, Service
 from app.models.user import User
 from app.models.visitor import Visitor
+
+if TYPE_CHECKING:
+    from app.models.organization import Organization
 
 
 class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -21,6 +25,16 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __table_args__ = (
         # Le listing filtre presque toujours sur statut + fenêtre de dates : index composite.
         Index("ix_visits_statut_checked_in_at", "statut", "checked_in_at"),
+        Index("ix_visits_org_statut_checked_in", "organization_id", "statut", "checked_in_at"),
+    )
+
+    # Obligatoire : c'est la colonne sur laquelle repose tout le cloisonnement du
+    # registre. Une visite sans organisation échapperait à chaque filtre.
+    organization_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
     )
 
     visitor_id: Mapped[uuid.UUID] = mapped_column(
@@ -62,6 +76,14 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         DateTime(timezone=True), default=utcnow, nullable=False, index=True
     )
     checked_out_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    checkout_origin: Mapped[CheckoutOrigin | None] = mapped_column(
+        SAEnum(
+            CheckoutOrigin,
+            name="checkout_origin",
+            values_callable=lambda e: [m.value for m in e],
+        ),
+        nullable=True,
+    )
 
     checked_in_by: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="RESTRICT"), nullable=False
@@ -86,6 +108,7 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
 
     visitor: Mapped[Visitor] = relationship("Visitor", lazy="joined")
+    organization: Mapped[Organization] = relationship("Organization", lazy="joined")
     service: Mapped[Service] = relationship("Service", lazy="joined")
     agent: Mapped[Agent | None] = relationship("Agent", lazy="joined")
     purpose: Mapped[Purpose | None] = relationship("Purpose", lazy="joined")

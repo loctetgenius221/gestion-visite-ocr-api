@@ -1,10 +1,10 @@
-# SIGV — Backend API
+# Fp-visites — Backend API
 
-API du **Système Intelligent de Gestion des Visites** : contrôle d'accès d'un poste
-d'accueil, avec extraction automatique de l'identité des visiteurs par lecture de la
-zone MRZ (ICAO 9303) de leur pièce d'identité.
+API de **Fp-visites** : contrôle d'accès d'un poste d'accueil, avec extraction
+automatique de l'identité des visiteurs par lecture de la zone MRZ (ICAO 9303) de
+leur pièce d'identité.
 
-Spécification fonctionnelle : [`SPEC_BACKEND_SIGV_OCR_MRZ.md`](SPEC_BACKEND_SIGV_OCR_MRZ.md)
+Spécification fonctionnelle : [`SPEC_BACKEND_FP_VISITES_OCR_MRZ.md`](SPEC_BACKEND_FP_VISITES_OCR_MRZ.md)
 Décisions techniques : [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md)
 Guide d'implémentation, de zéro à l'API : [`GUIDE_IMPLEMENTATION.md`](GUIDE_IMPLEMENTATION.md)
 Mise en production : [`DEPLOYMENT.md`](DEPLOYMENT.md)
@@ -46,13 +46,39 @@ Sondes : <http://localhost:8000/health> (processus) · <http://localhost:8000/he
 ### Comptes de démonstration
 
 Créés par `python -m app.seeds`, mot de passe réglé par `SEED_AGENT_PASSWORD`
-(défaut `Sigv@2026`) :
+(défaut `FpVisites@2026`) :
 
-| Identifiant | Rôle | Usage |
-|---|---|---|
-| `agent001` | `AGENT_CONTROLE` | app mobile |
-| `superviseur001` | `SUPERVISEUR` | app mobile — aucun droit d'administration |
-| `admin001` | `ADMIN` | dashboard web, accès global à l'API |
+| Identifiant | Rôle | Organisation | Usage |
+|---|---|---|---|
+| `agent001` | `AGENT_CONTROLE` | `MIN-INTERIEUR` | app mobile |
+| `superviseur001` | `SUPERVISEUR` | `MIN-INTERIEUR` | app mobile + statistiques de sa structure |
+| `orgadmin001` | `ORG_ADMIN` | `MIN-INTERIEUR` | dashboard, limité à sa structure |
+| `admin001` | `ADMIN` | — | dashboard, administration de la plateforme |
+
+Le seed crée aussi l'organisation `MIN-INTERIEUR`, à laquelle tous les comptes
+sont rattachés sauf `admin001`.
+
+### Rôles et périmètre
+
+`ADMIN` est le **seul** rôle non rattaché à une organisation : c'est ce qui lui
+donne la vue d'ensemble du parc. Tous les autres travaillent dans une structure,
+et ne voient qu'elle — visites, visiteurs déjà venus chez eux, services, agents,
+motifs, journal d'audit.
+
+| | `AGENT_CONTROLE` | `SUPERVISEUR` | `ORG_ADMIN` | `ADMIN` |
+|---|---|---|---|---|
+| Enregistrer et clôturer des visites | ✓ | ✓ | ✓ | ✓ |
+| Statistiques | — | ✓ | ✓ | ✓ |
+| Comptes, services, agents, motifs | — | — | sa structure | tout le parc |
+| Charte graphique et logo | — | — | sa structure | tout le parc |
+| Heure de clôture automatique | — | — | sa structure | défaut de plateforme |
+| Journal d'audit | — | — | sa structure | tout le parc |
+| Sécurité (verrouillage, rétention, export) | — | — | — | ✓ |
+| Créer / activer / désactiver une organisation | — | — | — | ✓ |
+
+Un compte non-`ADMIN` sans organisation est refusé dès sa première requête
+(`403 UNSCOPED_ACCOUNT`) : « pas d'organisation » ne vaut jamais « toutes les
+organisations ».
 
 ### Créer un compte à la demande
 
@@ -61,15 +87,24 @@ un accès de test, ou le premier administrateur d'une installation de production
 où les comptes de démonstration n'ont rien à faire :
 
 ```bash
-uv run python -m app.create_user test001
+# Premier administrateur de plateforme : aucun rattachement, c'est ce qui le définit.
 uv run python -m app.create_user admin002 --role ADMIN --nom "Awa Ndiaye"
-uv run python -m app.create_user agent007 --mot-de-passe "MotDePasseSolide2026"
+
+# Tout autre rôle appartient à une organisation, désignée par son code.
+uv run python -m app.create_user test001 --organisation MIN-INTERIEUR
+uv run python -m app.create_user agent007 --organisation MIN-INTERIEUR \
+    --mot-de-passe "MotDePasseSolide2026"
+uv run python -m app.create_user chef001 --role ORG_ADMIN --organisation MIN-INTERIEUR
 ```
 
 Sans `--mot-de-passe`, un mot de passe fort est généré et affiché **une seule
 fois** : seul son hash bcrypt part en base. Le script écrit dans la base désignée
 par `DATABASE_URL`, refuse un identifiant déjà pris et un mot de passe de moins de
 6 caractères.
+
+`--organisation` est obligatoire pour tout rôle autre qu'`ADMIN`, et interdit
+pour `ADMIN`. Un compte créé sans rattachement serait de toute façon refusé à sa
+première requête : autant le dire tout de suite.
 
 > Une fois l'API en ligne, la même opération se fait par `POST /api/v1/users`
 > depuis le dashboard. Cette commande sert surtout à l'amorçage, quand aucun
@@ -82,9 +117,16 @@ référentiels avec le personnel réel du ministère, à partir de l'export CSV 
 l'annuaire :
 
 ```bash
-uv run python -m app.import_annuaire data/annuaire.csv --dry-run   # montre le plan
-uv run python -m app.import_annuaire data/annuaire.csv             # applique
+uv run python -m app.import_annuaire data/annuaire.csv \
+    --organisation MIN-INTERIEUR --dry-run     # montre le plan
+uv run python -m app.import_annuaire data/annuaire.csv \
+    --organisation MIN-INTERIEUR               # applique
 ```
+
+`--organisation` désigne la structure qui reçoit l'annuaire : un service
+appartient toujours à l'une d'elles. Le rapprochement avec l'existant est borné à
+cette organisation — deux ministères ont chacun leur « DRH », et réutiliser celui
+du voisin y déverserait un annuaire étranger.
 
 Colonnes attendues — l'ordre est libre, la casse et les accents indifférents :
 
@@ -123,8 +165,8 @@ elle se relit facilement.
 Une collection prête à l'emploi est fournie dans [`postman/`](postman/).
 
 1. Dans Postman : **Import** → glissez les deux fichiers
-   `postman/SIGV.postman_collection.json` et `postman/SIGV.postman_environment.json`.
-2. En haut à droite, sélectionnez l'environnement **SIGV — Local**.
+   `postman/Fp-visites.postman_collection.json` et `postman/Fp-visites.postman_environment.json`.
+2. En haut à droite, sélectionnez l'environnement **Fp-visites — Local**.
 3. Lancez **Auth → Login**. Les tokens sont capturés automatiquement : toutes les
    autres requêtes s'authentifient seules, rien à copier-coller.
 4. Quatre requêtes envoient un fichier : ouvrez l'onglet **Body → form-data** et
@@ -189,7 +231,7 @@ inaccessible depuis un autre appareil.
 Puis **ouvrir le port dans le pare-feu Windows** (PowerShell administrateur) :
 
 ```powershell
-New-NetFirewallRule -DisplayName "SIGV backend 8000" -Direction Inbound `
+New-NetFirewallRule -DisplayName "Fp-visites backend 8000" -Direction Inbound `
   -Protocol TCP -LocalPort 8000 -Action Allow -Profile Private
 ```
 
@@ -251,7 +293,7 @@ PUT  /visits/{id}/checkout       → à la sortie du visiteur
 
 <http://localhost:8000/docs> permet tout, y compris l'upload de photo.
 
-Cliquez **Authorize**, saisissez `agent001` / `Sigv@2026` dans *username* / *password*
+Cliquez **Authorize**, saisissez `agent001` / `FpVisites@2026` dans *username* / *password*
 (laissez `client_id` et `client_secret` vides), puis **Authorize**. Toutes les routes
 protégées sont ensuite accessibles.
 

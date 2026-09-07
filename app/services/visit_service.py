@@ -12,6 +12,7 @@ from app.core.errors import (
     AppError,
     ArchivedReferentielError,
     ConflictError,
+    CrossOrganizationError,
     DuplicateVisitError,
     ExportFormatUnavailableError,
     PurposeNotFoundError,
@@ -25,7 +26,7 @@ from app.core.errors import (
 )
 from app.core.logging import get_logger
 from app.models.base import ensure_utc
-from app.models.enums import VisitStatus
+from app.models.enums import CheckoutOrigin, UserRole, VisitStatus
 from app.models.user import User
 from app.models.visit import Visit
 from app.models.visitor import Visitor
@@ -155,6 +156,7 @@ class VisitService:
         await self._refuser_si_deja_present(visitor)
 
         visit = Visit(
+            organization_id=payload.organization_id or service.organization_id,
             visitor_id=visitor.id,
             service_id=payload.service_id,
             agent_id=payload.agent_id,
@@ -214,24 +216,36 @@ class VisitService:
         )
 
     async def search_visitors(
-        self, terme: str, pagination: PaginationParams, current_user: User
+        self,
+        terme: str,
+        pagination: PaginationParams,
+        current_user: User,
+        *,
+        organization_id: uuid.UUID | None = None,
     ) -> Page[VisitorSearchResult]:
         """Retrouve un visiteur déjà venu, pour l'enregistrer sans rescanner sa pièce.
 
         La route expose de l'identité : sa longueur minimale est imposée côté
-        routeur, et le nombre de résultats consultés est tracé dans les logs
-        applicatifs. Le journal d'audit n'est pas alimenté ici — une entrée par
-        frappe de l'agent le rendrait illisible pour ce qu'il sert vraiment,
-        les écritures.
+        routeur, le périmètre d'organisation est imposé par le routeur également,
+        et le nombre de résultats consultés est tracé dans les logs applicatifs.
+        Le journal d'audit n'est pas alimenté ici — une entrée par frappe de
+        l'agent le rendrait illisible pour ce qu'il sert vraiment, les écritures.
         """
-        total = await self.visitors.count_search(terme)
+        total = await self.visitors.count_search(terme, organization_id=organization_id)
         lignes = await self.visitors.search(
-            terme, limit=pagination.page_size, offset=pagination.offset
+            terme,
+            limit=pagination.page_size,
+            offset=pagination.offset,
+            organization_id=organization_id,
         )
 
         logger.info(
             "Recherche de visiteurs",
-            extra={"resultats": total, "acteur": str(current_user.id)},
+            extra={
+                "resultats": total,
+                "acteur": str(current_user.id),
+                "organisation": str(organization_id) if organization_id else "toutes",
+            },
         )
 
         return Page[VisitorSearchResult](
@@ -269,10 +283,20 @@ class VisitService:
 
         return await self.visitors.add(Visitor(**payload))
 
-    async def get_visit(self, visit_id: uuid.UUID) -> Visit:
+    async def get_visit(self, visit_id: uuid.UUID, current_user: User | None = None) -> Visit:
         visit = await self.visits.get_by_id(visit_id)
         if visit is None:
             raise VisitNotFoundError(details={"visit_id": str(visit_id)})
+        # Le rôle décide, pas la nullité du rattachement : `organization_id is
+        # None` signifie « administrateur de plateforme » pour un ADMIN, mais
+        # aurait signifié « accès à tout » pour n'importe quel compte mal
+        # rattaché. Toutes les écritures sur une visite passent par ici.
+        if (
+            current_user is not None
+            and current_user.role is not UserRole.ADMIN
+            and visit.organization_id != current_user.organization_id
+        ):
+            raise CrossOrganizationError("Accès limité aux visites de votre organisation.")
         return visit
 
     async def list_visits(
@@ -290,7 +314,7 @@ class VisitService:
         )
 
     async def checkout(self, visit_id: uuid.UUID, current_user: User) -> Visit:
-        visit = await self.get_visit(visit_id)
+        visit = await self.get_visit(visit_id, current_user)
         if visit.statut is VisitStatus.ANNULEE:
             raise VisitCancelledError(details={"visit_id": str(visit_id)})
         if visit.statut is VisitStatus.SORTI:
@@ -301,6 +325,7 @@ class VisitService:
         visit.statut = VisitStatus.SORTI
         visit.checked_out_at = datetime.now(UTC)
         visit.checked_out_by = current_user.id
+        visit.checkout_origin = CheckoutOrigin.MANUAL
         await self.audit.record(
             AuditAction.VISIT_CHECKOUT,
             entity="visit",
@@ -327,7 +352,7 @@ class VisitService:
         elle-même ne porte pas ce motif — elle n'est pas censée raconter son
         histoire, le journal s'en charge.
         """
-        visit = await self.get_visit(visit_id)
+        visit = await self.get_visit(visit_id, current_user)
         if visit.statut is VisitStatus.ANNULEE:
             raise VisitCancelledError(details={"visit_id": str(visit_id)})
 
@@ -382,7 +407,7 @@ class VisitService:
 
     async def cancel_visit(self, visit_id: uuid.UUID, reason: str, current_user: User) -> Visit:
         """Annulation logique. La visite reste en base, avec son motif d'annulation."""
-        visit = await self.get_visit(visit_id)
+        visit = await self.get_visit(visit_id, current_user)
         if visit.statut is VisitStatus.ANNULEE:
             raise VisitCancelledError(details={"visit_id": str(visit_id)})
 
@@ -422,7 +447,7 @@ class VisitService:
         Le visiteur, lui, n'est pas supprimé : sa fiche sert aux autres passages,
         et ses photos de pièce relèvent de la purge (ADR-018).
         """
-        visit = await self.get_visit(visit_id)
+        visit = await self.get_visit(visit_id, current_user)
 
         await self.audit.record(
             AuditAction.VISIT_DELETED,

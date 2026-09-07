@@ -11,7 +11,12 @@ import uuid
 
 from fastapi import APIRouter, Query, status
 
-from app.core.deps import AdminUser, CurrentUser, ReferentielAdminServiceDep, SessionDep
+from app.core.deps import (
+    AdminUser,
+    ReferentielAdminServiceDep,
+    Scope,
+    SessionDep,
+)
 from app.core.errors import ServiceNotFoundError
 from app.models.referentiel import Service
 from app.repositories.referentiel_repository import (
@@ -81,10 +86,13 @@ def _build_tree(services: list[Service]) -> list[ServiceTree]:
 @router.get("/services", response_model=list[ServiceTree], summary="Liste des services")
 async def list_services(
     session: SessionDep,
-    current_user: CurrentUser,
+    scope: Scope,
     include_archived: bool = _INCLURE_ARCHIVES,
 ) -> list[ServiceTree]:
-    services = await ServiceRepository(session).list_all(include_archived=include_archived)
+    """Services de votre organisation. L'administrateur de plateforme les voit tous."""
+    services = await ServiceRepository(session).list_all(
+        organization_id=scope.organization_id, include_archived=include_archived
+    )
     return _build_tree(services)
 
 
@@ -96,11 +104,14 @@ async def list_services(
 async def list_service_agents(
     service_id: uuid.UUID,
     session: SessionDep,
-    current_user: CurrentUser,
+    scope: Scope,
     include_archived: bool = _INCLURE_ARCHIVES,
 ) -> list[AgentRead]:
-    if not await ServiceRepository(session).exists(service_id):
+    service_repo = ServiceRepository(session)
+    service = await service_repo.get_by_id(service_id)
+    if service is None:
         raise ServiceNotFoundError(details={"service_id": str(service_id)})
+    scope.ensure_can_access(service.organization_id)
     agents = await AgentRepository(session).list_all(
         service_id=service_id, include_archived=include_archived
     )
@@ -110,12 +121,15 @@ async def list_service_agents(
 @router.get("/agents", response_model=list[AgentRead], summary="Liste des agents du ministère")
 async def list_agents(
     session: SessionDep,
-    current_user: CurrentUser,
+    scope: Scope,
     service_id: uuid.UUID | None = Query(default=None, description="Filtre par service."),
     include_archived: bool = _INCLURE_ARCHIVES,
 ) -> list[AgentRead]:
+    """Personnel de votre organisation. L'administrateur de plateforme voit tout l'annuaire."""
     agents = await AgentRepository(session).list_all(
-        service_id=service_id, include_archived=include_archived
+        service_id=service_id,
+        organization_id=scope.organization_id,
+        include_archived=include_archived,
     )
     return [AgentRead.model_validate(agent) for agent in agents]
 
@@ -123,10 +137,13 @@ async def list_agents(
 @router.get("/purposes", response_model=list[PurposeRead], summary="Motifs de visite")
 async def list_purposes(
     session: SessionDep,
-    current_user: CurrentUser,
+    scope: Scope,
     include_archived: bool = _INCLURE_ARCHIVES,
 ) -> list[PurposeRead]:
-    purposes = await PurposeRepository(session).list_all(include_archived=include_archived)
+    """Motifs communs à la plateforme, plus ceux propres à votre organisation."""
+    purposes = await PurposeRepository(session).list_all(
+        organization_id=scope.organization_id, include_archived=include_archived
+    )
     return [PurposeRead.model_validate(purpose) for purpose in purposes]
 
 

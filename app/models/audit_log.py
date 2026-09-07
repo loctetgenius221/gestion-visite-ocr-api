@@ -26,6 +26,23 @@ class AuditLog(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         # acteur, avec un tri antéchronologique.
         Index("ix_audit_logs_entity_entity_id", "entity", "entity_id"),
         Index("ix_audit_logs_actor_id_created_at", "actor_id", "created_at"),
+        # Le journal d'un administrateur d'organisation est systématiquement
+        # borné à son périmètre, et trié du plus récent au plus ancien.
+        Index("ix_audit_logs_organization_id_created_at", "organization_id", "created_at"),
+    )
+
+    # Organisation concernée par l'événement. `NULL` désigne un événement de
+    # plateforme — administration globale, échec de connexion d'un compte non
+    # rattaché — visible du seul administrateur global.
+    #
+    # Renseignée à l'écriture plutôt que déduite à la lecture : l'organisation
+    # d'un acteur peut changer, et une trace doit rester rattachée au périmètre
+    # dans lequel l'action a réellement eu lieu.
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
     # `SET NULL` plutôt que `CASCADE` : supprimer un compte ne doit pas effacer la

@@ -5,7 +5,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import ColumnElement, Select, func, or_, select
+from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -92,12 +92,38 @@ class VisitorRepository:
 
         return or_(*clauses)
 
-    async def count_search(self, terme: str) -> int:
+    @staticmethod
+    def _clause_organisation(organization_id: uuid.UUID) -> ColumnElement[bool]:
+        """Restreint aux visiteurs déjà venus dans l'organisation donnée.
+
+        `Visitor` reste volontairement **global** : une même personne peut se
+        présenter dans plusieurs structures, et lui créer une fiche par
+        organisation dupliquerait son identité — donc son numéro de pièce et son
+        NIN — autant de fois qu'elle a d'interlocuteurs. Le cloisonnement porte
+        donc sur le lien de visite, pas sur la fiche : on ne retrouve une personne
+        que si elle est déjà venue chez soi.
+        """
+        venue = aliased(Visit)
+        return (
+            select(venue.id)
+            .where(venue.visitor_id == Visitor.id, venue.organization_id == organization_id)
+            .correlate(Visitor)
+            .exists()
+        )
+
+    async def count_search(self, terme: str, *, organization_id: uuid.UUID | None = None) -> int:
         stmt = select(func.count(Visitor.id)).where(self._clause_recherche(terme))
+        if organization_id is not None:
+            stmt = stmt.where(self._clause_organisation(organization_id))
         return (await self.session.execute(stmt)).scalar_one()
 
     async def search(
-        self, terme: str, *, limit: int, offset: int
+        self,
+        terme: str,
+        *,
+        limit: int,
+        offset: int,
+        organization_id: uuid.UUID | None = None,
     ) -> list[tuple[Visitor, datetime | None, uuid.UUID | None]]:
         """Fiches correspondantes, avec dernière venue et visite ouverte éventuelle.
 
@@ -109,9 +135,24 @@ class VisitorRepository:
         est une erreur de saisie, l'afficher comme un passage induirait en erreur.
         """
         ouverte = aliased(Visit)
+        conditions_ouverte = [
+            ouverte.visitor_id == Visitor.id,
+            ouverte.statut == VisitStatus.PRESENT,
+        ]
+        conditions_derniere = [
+            Visit.visitor_id == Visitor.id,
+            Visit.statut != VisitStatus.ANNULEE,
+        ]
+        # La dernière venue et la visite ouverte sont elles aussi restreintes à
+        # l'organisation de l'appelant : sans cela, la fiche révélerait qu'une
+        # personne s'est présentée ailleurs, et à quelle date.
+        if organization_id is not None:
+            conditions_ouverte.append(ouverte.organization_id == organization_id)
+            conditions_derniere.append(Visit.organization_id == organization_id)
+
         visite_ouverte_id = (
             select(ouverte.id)
-            .where(ouverte.visitor_id == Visitor.id, ouverte.statut == VisitStatus.PRESENT)
+            .where(*conditions_ouverte)
             .order_by(ouverte.checked_in_at.desc())
             .limit(1)
             .correlate(Visitor)
@@ -121,10 +162,7 @@ class VisitorRepository:
 
         stmt = (
             select(Visitor, derniere_visite_at, visite_ouverte_id)
-            .outerjoin(
-                Visit,
-                (Visit.visitor_id == Visitor.id) & (Visit.statut != VisitStatus.ANNULEE),
-            )
+            .outerjoin(Visit, and_(*conditions_derniere))
             .where(self._clause_recherche(terme))
             .group_by(Visitor.id)
             # `nulls_last` explicite : PostgreSQL place les NULL en tête sur un tri
@@ -133,6 +171,8 @@ class VisitorRepository:
             .limit(limit)
             .offset(offset)
         )
+        if organization_id is not None:
+            stmt = stmt.where(self._clause_organisation(organization_id))
         return [
             (visiteur, derniere, ouverte_id)
             for visiteur, derniere, ouverte_id in (await self.session.execute(stmt)).all()
@@ -179,8 +219,12 @@ class VisitRepository:
 
     @staticmethod
     def _apply_filters(stmt: Select, filters: VisitFilters) -> Select:
+        if filters.organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == filters.organization_id)
         if filters.statut is not None:
             stmt = stmt.where(Visit.statut == filters.statut)
+        if filters.checkout_origin is not None:
+            stmt = stmt.where(Visit.checkout_origin == filters.checkout_origin)
         if filters.date_from is not None:
             stmt = stmt.where(Visit.checked_in_at >= filters.date_from)
         if filters.date_to is not None:
@@ -235,28 +279,49 @@ class VisitRepository:
     # Les visites annulées sont exclues de tous les agrégats : une visite annulée
     # est une erreur de saisie, la compter fausserait les chiffres.
 
-    async def count_checked_in_between(self, start: datetime, end: datetime) -> int:
+    async def count_checked_in_between(
+        self,
+        start: datetime,
+        end: datetime,
+        organization_id: uuid.UUID | None = None,
+    ) -> int:
         stmt = select(func.count(Visit.id)).where(
             Visit.checked_in_at >= start,
             Visit.checked_in_at < end,
             Visit.statut != VisitStatus.ANNULEE,
         )
+        if organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == organization_id)
         return (await self.session.execute(stmt)).scalar_one()
 
-    async def count_checked_out_between(self, start: datetime, end: datetime) -> int:
+    async def count_checked_out_between(
+        self,
+        start: datetime,
+        end: datetime,
+        organization_id: uuid.UUID | None = None,
+    ) -> int:
         stmt = select(func.count(Visit.id)).where(
             Visit.checked_out_at.is_not(None),
             Visit.checked_out_at >= start,
             Visit.checked_out_at < end,
             Visit.statut != VisitStatus.ANNULEE,
         )
+        if organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == organization_id)
         return (await self.session.execute(stmt)).scalar_one()
 
-    async def count_present(self) -> int:
+    async def count_present(self, organization_id: uuid.UUID | None = None) -> int:
         stmt = select(func.count(Visit.id)).where(Visit.statut == VisitStatus.PRESENT)
+        if organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == organization_id)
         return (await self.session.execute(stmt)).scalar_one()
 
-    async def closed_visits_durations_seconds(self, start: datetime, end: datetime) -> list[float]:
+    async def closed_visits_durations_seconds(
+        self,
+        start: datetime,
+        end: datetime,
+        organization_id: uuid.UUID | None = None,
+    ) -> list[float]:
         """Durées des visites clôturées sur la période, pour la moyenne du dashboard.
 
         Le calcul de la différence de dates est fait en Python plutôt qu'en SQL :
@@ -268,13 +333,15 @@ class VisitRepository:
             Visit.checked_out_at < end,
             Visit.statut != VisitStatus.ANNULEE,
         )
+        if organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == organization_id)
         rows = (await self.session.execute(stmt)).all()
         return [(out - inn).total_seconds() for inn, out in rows if out is not None]
 
     # --- Analytics du dashboard web ---
 
     async def checkin_checkout_timestamps(
-        self, start: datetime, end: datetime
+        self, start: datetime, end: datetime, organization_id: uuid.UUID | None = None
     ) -> list[tuple[datetime, datetime | None]]:
         """Horodatages bruts de la période, pour les agrégats calculés en Python.
 
@@ -290,9 +357,16 @@ class VisitRepository:
             Visit.checked_in_at < end,
             Visit.statut != VisitStatus.ANNULEE,
         )
+        if organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == organization_id)
         return [(inn, out) for inn, out in (await self.session.execute(stmt)).all()]
 
-    async def checkout_timestamps(self, start: datetime, end: datetime) -> list[datetime]:
+    async def checkout_timestamps(
+        self,
+        start: datetime,
+        end: datetime,
+        organization_id: uuid.UUID | None = None,
+    ) -> list[datetime]:
         """Sorties de la période, pour la seconde série du graphe temporel."""
         stmt = select(Visit.checked_out_at).where(
             Visit.checked_out_at.is_not(None),
@@ -300,9 +374,16 @@ class VisitRepository:
             Visit.checked_out_at < end,
             Visit.statut != VisitStatus.ANNULEE,
         )
+        if organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == organization_id)
         return [row for row in (await self.session.execute(stmt)).scalars().all() if row]
 
-    async def count_by_service(self, start: datetime, end: datetime) -> list[tuple[Any, str, int]]:
+    async def count_by_service(
+        self,
+        start: datetime,
+        end: datetime,
+        organization_id: uuid.UUID | None = None,
+    ) -> list[tuple[Any, str, int]]:
         """`(service_id, nom, nombre)` sur la période, du plus fréquenté au moins."""
         stmt = (
             select(Service.id, Service.name, func.count(Visit.id))
@@ -315,9 +396,16 @@ class VisitRepository:
             .group_by(Service.id, Service.name)
             .order_by(func.count(Visit.id).desc(), Service.name)
         )
+        if organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == organization_id)
         return [(sid, name, total) for sid, name, total in (await self.session.execute(stmt)).all()]
 
-    async def count_by_purpose(self, start: datetime, end: datetime) -> list[tuple[Any, str, int]]:
+    async def count_by_purpose(
+        self,
+        start: datetime,
+        end: datetime,
+        organization_id: uuid.UUID | None = None,
+    ) -> list[tuple[Any, str, int]]:
         """`(purpose_id, libellé, nombre)`.
 
         `outerjoin` : `purpose_id` est nullable — l'agent peut saisir un motif
@@ -335,10 +423,17 @@ class VisitRepository:
             .group_by(Purpose.id, Purpose.libelle)
             .order_by(func.count(Visit.id).desc())
         )
+        if organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == organization_id)
         return [(pid, lib, total) for pid, lib, total in (await self.session.execute(stmt)).all()]
 
     async def top_agents(
-        self, start: datetime, end: datetime, *, limit: int
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        limit: int,
+        organization_id: uuid.UUID | None = None,
     ) -> list[tuple[Any, str, str | None, int]]:
         """`(agent_id, nom, service, nombre)` des personnes les plus visitées.
 
@@ -361,6 +456,8 @@ class VisitRepository:
             .order_by(func.count(Visit.id).desc(), Agent.name)
             .limit(limit)
         )
+        if organization_id is not None:
+            stmt = stmt.where(Visit.organization_id == organization_id)
         return [
             (aid, name, service, total)
             for aid, name, service, total in (await self.session.execute(stmt)).all()

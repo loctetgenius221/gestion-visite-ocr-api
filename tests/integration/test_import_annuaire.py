@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from app import import_annuaire as cli
 from app.import_annuaire import Rapport, appliquer, construire_plans, lire_csv
 from app.models import Base
+from app.models.organization import Organization
 from app.models.referentiel import Agent, Service
 
 ENTETE = "Matricule,nom_et_prenoms,Nom,Téléphone,Email,Fonction,Direction,Département,Sexe"
@@ -35,13 +36,37 @@ def ecrit_csv(tmp_path: Path, *lignes: str) -> Path:
     return chemin
 
 
+async def organisation_de_test(session: AsyncSession) -> Organization:
+    """Organisation d'accueil de l'annuaire, créée à la demande.
+
+    Un service appartient toujours à une structure : l'import doit désigner
+    laquelle, sans quoi les services créés n'apparaîtraient dans la liste
+    d'aucun poste de contrôle.
+    """
+    stmt = select(Organization).where(Organization.code == "MIN-TEST")
+    existante = (await session.execute(stmt)).scalar_one_or_none()
+    if existante is not None:
+        return existante
+    organisation = Organization(nom="Ministère de test", code="MIN-TEST", is_active=True)
+    session.add(organisation)
+    await session.commit()
+    return organisation
+
+
 async def importe(
     session: AsyncSession, chemin: Path, **kwargs: object
 ) -> tuple[Rapport, list[Service], list[Agent]]:
     """Joue l'import sur la session de test et relit ce qui est en base."""
+    organisation = await organisation_de_test(session)
     lignes, rapport = lire_csv(chemin)
     plans = construire_plans(lignes, rapport)
-    await appliquer(session, plans, rapport, **kwargs)  # type: ignore[arg-type]
+    await appliquer(
+        session,
+        plans,
+        rapport,
+        organization_id=organisation.id,
+        **kwargs,  # type: ignore[arg-type]
+    )
 
     services = list((await session.execute(select(Service).order_by(Service.code))).scalars())
     agents = list((await session.execute(select(Agent).order_by(Agent.name))).scalars())
@@ -83,7 +108,13 @@ async def test_un_service_existant_est_reutilise_par_son_code(
     session: AsyncSession, tmp_path: Path
 ) -> None:
     """Le seed pose `DSI` = « Direction des Systèmes d'Information » : l'annuaire s'y range."""
-    existant = Service(code="DS", name="Direction des Systèmes d'Information", floor="3e")
+    organisation = await organisation_de_test(session)
+    existant = Service(
+        code="DS",
+        name="Direction des Systèmes d'Information",
+        floor="3e",
+        organization_id=organisation.id,
+    )
     session.add(existant)
     await session.commit()
 
@@ -100,7 +131,10 @@ async def test_un_service_existant_est_reutilise_par_son_nom(
     session: AsyncSession, tmp_path: Path
 ) -> None:
     """Même service, code différent : la comparaison ignore casse et accents."""
-    existant = Service(code="INFO", name="DIRECTION DES SYSTÈMES")
+    organisation = await organisation_de_test(session)
+    existant = Service(
+        code="INFO", name="DIRECTION DES SYSTÈMES", organization_id=organisation.id
+    )
     session.add(existant)
     await session.commit()
 
@@ -203,7 +237,10 @@ async def test_deux_plans_ne_se_partagent_pas_un_meme_service(
     Sans le garde-fou, deux annuaires distincts se déverseraient dans la même
     entrée ; ici le second obtient un code dérivé.
     """
-    session.add(Service(code="DS", name="Direction Générale"))
+    organisation = await organisation_de_test(session)
+    session.add(
+        Service(code="DS", name="Direction Générale", organization_id=organisation.id)
+    )
     await session.commit()
 
     _, services, _ = await importe(
@@ -227,9 +264,14 @@ class TestLigneDeCommande:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
 
-        monkeypatch.setattr(
-            cli, "SessionLocal", async_sessionmaker(bind=engine, expire_on_commit=False)
-        )
+        fabrique = async_sessionmaker(bind=engine, expire_on_commit=False)
+        async with fabrique() as session:
+            session.add(
+                Organization(nom="Ministère de test", code="MIN-TEST", is_active=True)
+            )
+            await session.commit()
+
+        monkeypatch.setattr(cli, "SessionLocal", fabrique)
         monkeypatch.setattr(cli, "dispose_engine", _ne_fait_rien)
         yield
         await engine.dispose()
@@ -239,7 +281,9 @@ class TestLigneDeCommande:
     ) -> None:
         chemin = ecrit_csv(tmp_path, *LIGNES)
 
-        code = await cli.main([str(chemin), "--dry-run"])
+        code = await cli.main(
+            [str(chemin), "--organisation", "MIN-TEST", "--dry-run"]
+        )
 
         assert code == 0
         sortie = capsys.readouterr().out
@@ -250,7 +294,9 @@ class TestLigneDeCommande:
     async def test_code_retour_1_sur_fichier_absent(
         self, base_temporaire: None, tmp_path: Path, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        code = await cli.main([str(tmp_path / "absent.csv")])
+        code = await cli.main(
+            [str(tmp_path / "absent.csv"), "--organisation", "MIN-TEST"]
+        )
 
         assert code == 1
         assert "Lecture impossible" in capsys.readouterr().err

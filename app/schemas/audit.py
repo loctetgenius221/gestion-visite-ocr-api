@@ -13,6 +13,7 @@ from app.models.audit_log import AuditLog
 
 class AuditLogRead(BaseModel):
     id: uuid.UUID
+    organization_id: uuid.UUID | None = None
     actor_id: uuid.UUID | None = None
     actor_identifiant: str | None = None
     action: str = Field(examples=["visit.cancelled", "user.created", "auth.login.failed"])
@@ -32,6 +33,7 @@ class AuditLogRead(BaseModel):
         """
         return cls(
             id=log.id,
+            organization_id=log.organization_id,
             actor_id=log.actor_id,
             actor_identifiant=log.actor_identifiant,
             action=log.action,
@@ -44,6 +46,9 @@ class AuditLogRead(BaseModel):
 
 
 class AuditLogFilters(BaseModel):
+    # Renseigné par le routeur à partir du périmètre de l'appelant : un
+    # administrateur d'organisation ne lit que le journal de la sienne.
+    organization_id: uuid.UUID | None = None
     actor_id: uuid.UUID | None = None
     action: str | None = Field(default=None, max_length=80)
     entity: str | None = Field(default=None, max_length=50)

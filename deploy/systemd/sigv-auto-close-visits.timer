@@ -1,0 +1,29 @@
+# Déclenchement de la clôture automatique des visites.
+#
+#   sudo systemctl enable --now sigv-auto-close-visits.timer
+#   systemctl list-timers sigv-auto-close-visits.timer   # prochaine exécution
+#   journalctl -u sigv-auto-close-visits                 # résultat des exécutions
+#
+# Toutes les cinq minutes, et non une fois par jour à heure fixe : l'heure de
+# clôture est un réglage **par organisation**, modifiable depuis le dashboard sans
+# redéploiement. Un timer calé sur une heure unique obligerait à éditer ce fichier
+# à chaque changement, et ne saurait de toute façon pas servir deux structures aux
+# horaires différents.
+#
+# Le coût est nul : la commande sort immédiatement si l'heure d'une organisation
+# n'est pas atteinte, et l'exécution du jour est déjà enregistrée sinon.
+
+[Unit]
+Description=Fp-visites — déclenchement de la clôture automatique des visites
+
+[Timer]
+OnCalendar=*-*-* *:00/5:00
+# Rattrape l'exécution si la machine était éteinte à l'heure prévue : sans cela,
+# une coupure au moment de la fermeture laisserait les visites du jour ouvertes.
+Persistent=true
+# Léger étalement, pour ne pas faire tomber plusieurs installations sur la même
+# seconde si elles partagent une base.
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

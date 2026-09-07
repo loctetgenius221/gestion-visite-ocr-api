@@ -11,6 +11,7 @@ from app.schemas.common import ORMModel
 
 class UserRead(ORMModel):
     id: uuid.UUID
+    organization_id: uuid.UUID | None = None
     nom: str
     identifiant: str
     poste: str | None = None

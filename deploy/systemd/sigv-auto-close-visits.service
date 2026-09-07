@@ -1,0 +1,49 @@
+# Clôture automatique des visites restées PRESENT au-delà de l'heure configurée,
+# et création d'une fiche « pièce potentiellement oubliée » pour chacune.
+#
+#   sudo cp deploy/systemd/sigv-auto-close-visits.service /etc/systemd/system/
+#   sudo cp deploy/systemd/sigv-auto-close-visits.timer   /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sigv-auto-close-visits.timer
+#
+# Avant de l'activer, mesurez ce qu'elle clôturerait :
+#
+#   sudo -u sigv /home/sigv/sigv-backend/.venv/bin/python -m app.auto_close_visits --dry-run
+#
+# La commande parcourt les organisations **actives** et applique à chacune son
+# propre `automatic_visit_closure_time` (17:00 par défaut), réglable depuis le
+# dashboard par l'administrateur de la structure : un ministère qui ferme à 17:00
+# et un port qui ferme à 20:00 ne partagent pas la même heure.
+#
+# Elle ne fait rien avant l'heure de l'organisation traitée, et une seconde
+# exécution le même jour pour la même organisation est un no-op tracé
+# (`automatic_closure_runs` porte une contrainte d'unicité sur la date). C'est ce
+# qui permet de la déclencher toutes les cinq minutes sans risque.
+#
+# Adaptez les chemins si l'application n'est pas installée dans /home/sigv/sigv-backend.
+
+[Unit]
+Description=Fp-visites — clôture automatique des visites
+Documentation=file:///home/sigv/sigv-backend/DEPLOYMENT.md
+After=network-online.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+User=sigv
+Group=sigv
+WorkingDirectory=/home/sigv/sigv-backend
+EnvironmentFile=/home/sigv/sigv-backend/.env
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+ExecStart=/home/sigv/sigv-backend/.venv/bin/python -m app.auto_close_visits
+
+# --- Durcissement, aligné sur sigv-api.service ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=false
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+# La commande n'écrit qu'en base : aucun chemin du disque n'a à être ouvert.

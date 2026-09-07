@@ -7,6 +7,7 @@ from datetime import UTC, datetime, timedelta
 from httpx import AsyncClient
 from sqlalchemy import select
 
+from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.user import MIN_PASSWORD_LENGTH
 from app.services.user_admin_service import GENERATED_PASSWORD_LENGTH
@@ -15,12 +16,20 @@ from tests.conftest import TEST_PASSWORD
 
 class TestCreation:
     async def test_le_mot_de_passe_genere_nest_renvoye_quune_fois(
-        self, client: AsyncClient, admin_headers: dict[str, str]
+        self,
+        client: AsyncClient,
+        admin_headers: dict[str, str],
+        organization: Organization,
     ) -> None:
         creation = await client.post(
             "/users",
             headers=admin_headers,
-            json={"nom": "Awa Ndiaye", "identifiant": "agent042", "role": "AGENT_CONTROLE"},
+            json={
+                "nom": "Awa Ndiaye",
+                "identifiant": "agent042",
+                "role": "AGENT_CONTROLE",
+                "organization_id": str(organization.id),
+            },
         )
 
         assert creation.status_code == 201
@@ -42,7 +51,10 @@ class TestCreation:
         assert login.status_code == 200
 
     async def test_un_mot_de_passe_fourni_nest_pas_renvoye(
-        self, client: AsyncClient, admin_headers: dict[str, str]
+        self,
+        client: AsyncClient,
+        admin_headers: dict[str, str],
+        organization: Organization,
     ) -> None:
         """Rien à retourner : l'administrateur le connaît déjà."""
         response = await client.post(
@@ -53,6 +65,7 @@ class TestCreation:
                 "identifiant": "agent043",
                 "role": "AGENT_CONTROLE",
                 "mot_de_passe": "MotDePasseSolide2026",
+                "organization_id": str(organization.id),
             },
         )
 
@@ -60,12 +73,20 @@ class TestCreation:
         assert response.json()["mot_de_passe"] is None
 
     async def test_identifiant_deja_pris(
-        self, client: AsyncClient, admin_headers: dict[str, str]
+        self,
+        client: AsyncClient,
+        admin_headers: dict[str, str],
+        organization: Organization,
     ) -> None:
         response = await client.post(
             "/users",
             headers=admin_headers,
-            json={"nom": "Doublon", "identifiant": "agent001", "role": "AGENT_CONTROLE"},
+            json={
+                "nom": "Doublon",
+                "identifiant": "agent001",
+                "role": "AGENT_CONTROLE",
+                "organization_id": str(organization.id),
+            },
         )
 
         assert response.status_code == 409
@@ -90,7 +111,10 @@ class TestCreation:
         assert response.json()["error_code"] == "VALIDATION_ERROR"
 
     async def test_le_plancher_est_de_six_caracteres(
-        self, client: AsyncClient, admin_headers: dict[str, str]
+        self,
+        client: AsyncClient,
+        admin_headers: dict[str, str],
+        organization: Organization,
     ) -> None:
         """Application interne : un agent d'accueil saisit ce mot de passe sur une
         tablette plusieurs fois par jour. Six caractères pile doivent passer."""
@@ -103,14 +127,15 @@ class TestCreation:
                 "nom": "Awa Sow",
                 "identifiant": "agent045",
                 "role": "AGENT_CONTROLE",
-                "mot_de_passe": "Sigv26",
+                "mot_de_passe": "FpVi26",
+                "organization_id": str(organization.id),
             },
         )
 
         assert response.status_code == 201, response.text
         # Et il ouvre réellement une session : la règle ne s'arrête pas au schéma.
         connexion = await client.post(
-            "/auth/login", json={"identifiant": "agent045", "mot_de_passe": "Sigv26"}
+            "/auth/login", json={"identifiant": "agent045", "mot_de_passe": "FpVi26"}
         )
         assert connexion.status_code == 200, connexion.text
 
@@ -124,7 +149,7 @@ class TestCreation:
                 "nom": "Y",
                 "identifiant": "agent046",
                 "role": "AGENT_CONTROLE",
-                "mot_de_passe": "Sigv2",
+                "mot_de_passe": "FpVi2",
             },
         )
 

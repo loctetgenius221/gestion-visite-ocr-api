@@ -14,7 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.deps import AdminUser, CurrentUser, DashboardServiceDep
+from app.core.deps import DashboardServiceDep, Scope, SupervisorOrAdminUser
 from app.schemas.dashboard import (
     AvgDurationResponse,
     BreakdownResponse,
@@ -49,8 +49,8 @@ PeriodDep = Annotated[PeriodQuery, Depends()]
 
 
 @router.get("/stats", response_model=DashboardStats, summary="Statistiques du poste d'accueil")
-async def get_stats(service: DashboardServiceDep, current_user: CurrentUser) -> DashboardStats:
-    return await service.get_stats()
+async def get_stats(service: DashboardServiceDep, scope: Scope) -> DashboardStats:
+    return await service.get_stats(organization_id=scope.organization_id)
 
 
 @router.get(
@@ -60,13 +60,17 @@ async def get_stats(service: DashboardServiceDep, current_user: CurrentUser) -> 
 )
 async def get_timeseries(
     service: DashboardServiceDep,
-    current_admin: AdminUser,
+    current_admin: SupervisorOrAdminUser,
+    scope: Scope,
     period: PeriodDep,
     granularity: Granularity = Query(default="day"),
 ) -> TimeSeriesResponse:
     """Toutes les tranches de la période sont présentes, y compris celles à zéro :
     un graphe qui saute les jours creux laisse croire à une continuité inexistante."""
-    return await service.timeseries(granularity, period.date_from, period.date_to)
+    return await service.timeseries(
+        granularity, period.date_from, period.date_to,
+        organization_id=scope.organization_id,
+    )
 
 
 @router.get(
@@ -75,9 +79,14 @@ async def get_timeseries(
     summary="Répartition des visites par service",
 )
 async def get_by_service(
-    service: DashboardServiceDep, current_admin: AdminUser, period: PeriodDep
+    service: DashboardServiceDep,
+    current_admin: SupervisorOrAdminUser,
+    scope: Scope,
+    period: PeriodDep,
 ) -> BreakdownResponse:
-    return await service.by_service(period.date_from, period.date_to)
+    return await service.by_service(
+        period.date_from, period.date_to, organization_id=scope.organization_id
+    )
 
 
 @router.get(
@@ -86,10 +95,15 @@ async def get_by_service(
     summary="Répartition des visites par motif",
 )
 async def get_by_purpose(
-    service: DashboardServiceDep, current_admin: AdminUser, period: PeriodDep
+    service: DashboardServiceDep,
+    current_admin: SupervisorOrAdminUser,
+    scope: Scope,
+    period: PeriodDep,
 ) -> BreakdownResponse:
     """Les visites à motif libre sont regroupées sous une entrée `id: null`."""
-    return await service.by_purpose(period.date_from, period.date_to)
+    return await service.by_purpose(
+        period.date_from, period.date_to, organization_id=scope.organization_id
+    )
 
 
 @router.get(
@@ -98,10 +112,15 @@ async def get_by_purpose(
     summary="Histogramme des entrées par heure",
 )
 async def get_peak_hours(
-    service: DashboardServiceDep, current_admin: AdminUser, period: PeriodDep
+    service: DashboardServiceDep,
+    current_admin: SupervisorOrAdminUser,
+    scope: Scope,
+    period: PeriodDep,
 ) -> PeakHoursResponse:
     """Les 24 heures sont toujours renvoyées, à zéro le cas échéant. Heures en UTC."""
-    return await service.peak_hours(period.date_from, period.date_to)
+    return await service.peak_hours(
+        period.date_from, period.date_to, organization_id=scope.organization_id
+    )
 
 
 @router.get(
@@ -110,11 +129,16 @@ async def get_peak_hours(
     summary="Durée moyenne de présence",
 )
 async def get_avg_duration(
-    service: DashboardServiceDep, current_admin: AdminUser, period: PeriodDep
+    service: DashboardServiceDep,
+    current_admin: SupervisorOrAdminUser,
+    scope: Scope,
+    period: PeriodDep,
 ) -> AvgDurationResponse:
     """La médiane accompagne la moyenne : une visite oubliée en « présent » puis
     clôturée le lendemain suffit à faire dérailler une moyenne seule."""
-    return await service.avg_duration(period.date_from, period.date_to)
+    return await service.avg_duration(
+        period.date_from, period.date_to, organization_id=scope.organization_id
+    )
 
 
 @router.get(
@@ -124,8 +148,12 @@ async def get_avg_duration(
 )
 async def get_top_agents(
     service: DashboardServiceDep,
-    current_admin: AdminUser,
+    current_admin: SupervisorOrAdminUser,
+    scope: Scope,
     period: PeriodDep,
     limit: int = Query(default=10, ge=1, le=100),
 ) -> TopAgentsResponse:
-    return await service.top_agents(limit, period.date_from, period.date_to)
+    return await service.top_agents(
+        limit, period.date_from, period.date_to,
+        organization_id=scope.organization_id,
+    )

@@ -34,6 +34,7 @@ class UserAdminRead(ORMModel):
     """
 
     id: uuid.UUID
+    organization_id: uuid.UUID | None = None
     nom: str
     identifiant: str
     poste: str | None = None
@@ -57,6 +58,7 @@ class UserCreate(BaseModel):
 
     nom: str = Field(min_length=1, max_length=150)
     identifiant: str = Field(min_length=3, max_length=100)
+    organization_id: uuid.UUID | None = None
     role: UserRole = UserRole.AGENT_CONTROLE
     poste: str | None = Field(default=None, max_length=150)
     # Omis, un mot de passe est généré par le serveur et renvoyé **une seule fois**
@@ -76,6 +78,7 @@ class UserUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     nom: str | None = Field(default=None, min_length=1, max_length=150)
+    organization_id: uuid.UUID | None = None
     poste: str | None = Field(default=None, max_length=150)
     role: UserRole | None = None
 
@@ -127,6 +130,7 @@ class SessionRead(ORMModel):
 
 
 class UserFilters(BaseModel):
+    organization_id: uuid.UUID | None = None
     role: UserRole | None = None
     status: UserStatus | None = None
     search: str | None = Field(default=None, max_length=100, description="Nom ou identifiant.")

@@ -1,4 +1,4 @@
-# Service systemd de l'API SIGV.
+# Service systemd de l'API Fp-visites.
 #
 #   sudo cp deploy/systemd/sigv-api.service /etc/systemd/system/
 #   sudo systemctl daemon-reload
@@ -7,7 +7,7 @@
 # Adaptez les chemins si l'application n'est pas installée dans /home/sigv/sigv-backend.
 
 [Unit]
-Description=SIGV Backend API (FastAPI/uvicorn)
+Description=Fp-visites Backend API (FastAPI/uvicorn)
 Documentation=file:///home/sigv/sigv-backend/DEPLOYMENT.md
 After=network-online.target postgresql.service
 Wants=network-online.target

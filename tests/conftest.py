@@ -31,6 +31,7 @@ from app.core.security import hash_password  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.models import Base  # noqa: E402
 from app.models.enums import UserRole  # noqa: E402
+from app.models.organization import Organization  # noqa: E402
 from app.models.referentiel import Agent, Purpose, Service  # noqa: E402
 from app.models.user import User  # noqa: E402
 
@@ -59,7 +60,27 @@ async def session(engine) -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def seeded(session: AsyncSession) -> dict[str, object]:
+async def organization(session: AsyncSession) -> Organization:
+    """Organisation d'accueil du jeu de test.
+
+    Tout compte autre qu'`ADMIN` est rattaché à une organisation — c'est
+    l'invariant que `get_tenant_scope` fait respecter. Les fixtures le
+    reproduisent donc, au lieu de laisser des comptes « hors périmètre » qui
+    n'existent pas en production et masqueraient les fuites de cloisonnement.
+    """
+    organization = Organization(
+        nom="Ministère de l'Intérieur",
+        code="MIN-INTERIEUR",
+        localisation="Dakar",
+        is_active=True,
+    )
+    session.add(organization)
+    await session.commit()
+    return organization
+
+
+@pytest.fixture
+async def seeded(session: AsyncSession, organization: Organization) -> dict[str, object]:
     """Jeu de données minimal : un agent de contrôle, un service, un agent, un motif."""
     user = User(
         nom="Agent Test",
@@ -67,17 +88,25 @@ async def seeded(session: AsyncSession) -> dict[str, object]:
         mot_de_passe_hash=hash_password(TEST_PASSWORD),
         poste="Poste principal",
         role=UserRole.AGENT_CONTROLE,
+        organization_id=organization.id,
         is_active=True,
     )
-    service = Service(name="Direction des RH", code="DRH", floor="2e étage")
-    purpose = Purpose(libelle="Rendez-vous professionnel")
+    service = Service(
+        name="Direction des RH", code="DRH", floor="2e étage", organization_id=organization.id
+    )
+    purpose = Purpose(libelle="Rendez-vous professionnel", organization_id=organization.id)
     session.add_all([user, service, purpose])
     await session.flush()
 
     agent = Agent(
         name="Aminata Diallo", role="Directrice des RH", office="B201", service_id=service.id
     )
-    other_service = Service(name="Direction Informatique", code="DSI", floor="3e étage")
+    other_service = Service(
+        name="Direction Informatique",
+        code="DSI",
+        floor="3e étage",
+        organization_id=organization.id,
+    )
     session.add_all([agent, other_service])
     await session.flush()
 
@@ -86,6 +115,7 @@ async def seeded(session: AsyncSession) -> dict[str, object]:
     await session.commit()
 
     return {
+        "organization": organization,
         "user": user,
         "service": service,
         "agent": agent,
@@ -93,6 +123,43 @@ async def seeded(session: AsyncSession) -> dict[str, object]:
         "other_service": other_service,
         "other_agent": other_agent,
     }
+
+
+@pytest.fixture
+async def other_organization(session: AsyncSession) -> Organization:
+    """Seconde structure, pour vérifier qu'aucune donnée ne franchit la frontière."""
+    organization = Organization(
+        nom="Port Autonome de Dakar", code="PAD", localisation="Môle 2", is_active=True
+    )
+    session.add(organization)
+    await session.commit()
+    return organization
+
+
+@pytest.fixture
+async def org_admin(session: AsyncSession, organization: Organization) -> User:
+    """Administrateur de l'organisation du jeu de test."""
+    user = User(
+        nom="Administratrice Organisation",
+        identifiant="orgadmin001",
+        mot_de_passe_hash=hash_password(TEST_PASSWORD),
+        poste="Direction",
+        role=UserRole.ORG_ADMIN,
+        organization_id=organization.id,
+        is_active=True,
+    )
+    session.add(user)
+    await session.commit()
+    return user
+
+
+@pytest.fixture
+async def org_admin_headers(client: AsyncClient, org_admin: User) -> dict[str, str]:
+    response = await client.post(
+        "/auth/login", json={"identifiant": "orgadmin001", "mot_de_passe": TEST_PASSWORD}
+    )
+    assert response.status_code == 200, response.text
+    return {"Authorization": f"Bearer {response.json()['access_token']}"}
 
 
 @pytest.fixture
@@ -128,7 +195,7 @@ async def auth_headers(client: AsyncClient, seeded: dict[str, object]) -> dict[s
 
 @pytest.fixture
 async def admin(session: AsyncSession, seeded: dict[str, object]) -> User:
-    """Compte administrateur : le seul habilité sur les routes du dashboard web."""
+    """Administrateur de plateforme : non rattaché, seul à voir toutes les structures."""
     user = User(
         nom="Administrateur Test",
         identifiant="admin001",

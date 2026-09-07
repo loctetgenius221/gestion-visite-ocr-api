@@ -56,7 +56,7 @@ async def list_users(
     filters: Annotated[UserFilters, Depends(get_user_filters)],
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ) -> Page[UserAdminRead]:
-    return await service.list_users(filters, pagination)
+    return await service.list_users(filters, pagination, current_admin)
 
 
 @router.post(
@@ -84,7 +84,7 @@ async def create_user(
 async def get_user(
     user_id: uuid.UUID, service: UserAdminServiceDep, current_admin: AdminUser
 ) -> UserAdminRead:
-    return UserAdminRead.model_validate(await service.get_user(user_id))
+    return UserAdminRead.model_validate(await service.get_user(user_id, current_admin))
 
 
 @router.put("/{user_id}", response_model=UserAdminRead, summary="Modifie nom, poste ou rôle")
@@ -153,7 +153,7 @@ async def list_sessions(
     user_id: uuid.UUID, service: UserAdminServiceDep, current_admin: AdminUser
 ) -> list[SessionRead]:
     """Refresh tokens émis, ni révoqués ni expirés. Le token lui-même n'est pas stocké."""
-    return await service.list_sessions(user_id)
+    return await service.list_sessions(user_id, current_admin)
 
 
 @router.delete(

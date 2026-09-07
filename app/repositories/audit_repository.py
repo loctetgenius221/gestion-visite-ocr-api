@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import uuid
+
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +26,8 @@ class AuditLogRepository:
 
     @staticmethod
     def _apply_filters(stmt: Select, filters: AuditLogFilters) -> Select:
+        if filters.organization_id is not None:
+            stmt = stmt.where(AuditLog.organization_id == filters.organization_id)
         if filters.actor_id is not None:
             stmt = stmt.where(AuditLog.actor_id == filters.actor_id)
         if filters.action:
@@ -53,9 +57,16 @@ class AuditLogRepository:
         )
         return list((await self.session.execute(stmt)).scalars().all())
 
-    async def distinct_actions(self) -> list[str]:
-        """Actions réellement présentes — alimente le filtre du dashboard."""
+    async def distinct_actions(self, *, organization_id: uuid.UUID | None = None) -> list[str]:
+        """Actions réellement présentes — alimente le filtre du dashboard.
+
+        Bornée au périmètre de l'appelant : la seule liste des verbes présents
+        renseignerait déjà un administrateur d'organisation sur ce qui se passe
+        ailleurs.
+        """
         stmt = select(AuditLog.action).distinct().order_by(AuditLog.action)
+        if organization_id is not None:
+            stmt = stmt.where(AuditLog.organization_id == organization_id)
         return list((await self.session.execute(stmt)).scalars().all())
 
     async def list_recent_for_entity(

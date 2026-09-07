@@ -19,6 +19,7 @@ from app.core.database import SessionLocal, dispose_engine
 from app.core.logging import configure_logging, get_logger
 from app.core.security import hash_password
 from app.models.enums import UserRole
+from app.models.organization import Organization
 from app.models.referentiel import Agent, Purpose, Service
 from app.models.user import User
 
@@ -26,7 +27,7 @@ logger = get_logger(__name__)
 
 # Mot de passe de l'agent de démonstration : surchargeable par variable
 # d'environnement, jamais destiné à un déploiement réel.
-DEMO_AGENT_PASSWORD = "Sigv@2026"
+DEMO_AGENT_PASSWORD = "FpVisites@2026"
 MIN_SEED_PASSWORD_LENGTH = 12
 # `or` plutôt qu'un défaut de `getenv` : une variable présente mais vide — cas
 # courant dans un fichier `.env` recopié sans être rempli — ne doit pas créer de
@@ -46,6 +47,12 @@ def _check_seed_password() -> None:
             "SEED_AGENT_PASSWORD doit être défini et faire au moins "
             f"{MIN_SEED_PASSWORD_LENGTH} caractères pour semer une base de production."
         )
+
+ORGANIZATION: dict[str, str] = {
+    "code": "MIN-INTERIEUR",
+    "nom": "Ministère de l'Intérieur",
+    "localisation": "Dakar, Plateau",
+}
 
 SERVICES: list[dict[str, str | None]] = [
     {"code": "DRH", "name": "Direction des Ressources Humaines", "floor": "2e étage"},
@@ -92,9 +99,17 @@ USERS: list[dict[str, object]] = [
         "role": UserRole.SUPERVISEUR,
     },
     {
+        # Administrateur de la structure : gère ses comptes, ses référentiels,
+        # sa charte graphique et ses réglages d'exploitation.
+        "nom": "Administratrice du Ministère",
+        "identifiant": "orgadmin001",
+        "poste": "Direction",
+        "role": UserRole.ORG_ADMIN,
+    },
+    {
         # Compte du dashboard web. Seul rôle habilité sur les routes
         # d'administration : comptes, référentiels en écriture, audit, paramètres.
-        "nom": "Administrateur SIGV",
+        "nom": "Administrateur Fp-visites",
         "identifiant": "admin001",
         "poste": "Administration",
         "role": UserRole.ADMIN,
@@ -102,15 +117,40 @@ USERS: list[dict[str, object]] = [
 ]
 
 
-async def _seed_services(session: AsyncSession) -> dict[str, Service]:
+async def _seed_organization(session: AsyncSession) -> Organization:
+    """Organisation d'accueil du jeu de démonstration.
+
+    Tout le reste s'y rattache : services, agents et comptes appartiennent à une
+    structure, et un jeu de seed hors organisation ne serait visible d'aucun
+    poste de contrôle.
+    """
+    stmt = select(Organization).where(Organization.code == ORGANIZATION["code"])
+    existante = (await session.execute(stmt)).scalar_one_or_none()
+    if existante is not None:
+        return existante
+    organization = Organization(**ORGANIZATION, is_active=True)
+    session.add(organization)
+    await session.flush()
+    return organization
+
+
+async def _seed_services(
+    session: AsyncSession, organization: Organization
+) -> dict[str, Service]:
     existing = {
         service.code: service
-        for service in (await session.execute(select(Service))).scalars().all()
+        for service in (
+            await session.execute(
+                select(Service).where(Service.organization_id == organization.id)
+            )
+        )
+        .scalars()
+        .all()
     }
     for data in SERVICES:
         code = str(data["code"])
         if code not in existing:
-            service = Service(**data)
+            service = Service(**data, organization_id=organization.id)
             session.add(service)
             existing[code] = service
     await session.flush()
@@ -130,27 +170,50 @@ async def _seed_agents(session: AsyncSession, services: dict[str, Service]) -> N
 
 
 async def _seed_purposes(session: AsyncSession) -> None:
-    known = set((await session.execute(select(Purpose.libelle))).scalars().all())
+    """Motifs **communs** (`organization_id` nul) : proposés à toutes les structures.
+
+    Ce sont des libellés génériques — « Dépôt de dossier », « Réunion de travail » —
+    qu'aucune organisation n'a de raison de redéfinir. Une structure reste libre
+    d'ajouter les siens à côté.
+    """
+    known = set(
+        (
+            await session.execute(
+                select(Purpose.libelle).where(Purpose.organization_id.is_(None))
+            )
+        )
+        .scalars()
+        .all()
+    )
     for libelle in PURPOSES:
         if libelle not in known:
-            session.add(Purpose(libelle=libelle))
+            session.add(Purpose(libelle=libelle, organization_id=None))
 
 
-async def _seed_users(session: AsyncSession) -> None:
+async def _seed_users(session: AsyncSession, organization: Organization) -> None:
+    """Comptes de démonstration. Seul `ADMIN` reste hors organisation."""
     known = set((await session.execute(select(User.identifiant))).scalars().all())
     for data in USERS:
         if data["identifiant"] in known:
             continue
-        session.add(User(**data, mot_de_passe_hash=hash_password(DEFAULT_AGENT_PASSWORD)))
+        rattachement = None if data["role"] is UserRole.ADMIN else organization.id
+        session.add(
+            User(
+                **data,
+                organization_id=rattachement,
+                mot_de_passe_hash=hash_password(DEFAULT_AGENT_PASSWORD),
+            )
+        )
 
 
 async def seed(session: AsyncSession) -> None:
     """Insère les référentiels et les comptes de démonstration manquants."""
     _check_seed_password()
-    services = await _seed_services(session)
+    organization = await _seed_organization(session)
+    services = await _seed_services(session, organization)
     await _seed_agents(session, services)
     await _seed_purposes(session)
-    await _seed_users(session)
+    await _seed_users(session, organization)
     await session.commit()
 
     counts = {

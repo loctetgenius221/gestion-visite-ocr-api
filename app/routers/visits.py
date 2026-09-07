@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
-from app.core.deps import AdminUser, CurrentUser, VisitServiceDep
-from app.models.enums import VisitStatus
+from app.core.deps import AdminScope, AdminUser, CurrentUser, Scope, VisitServiceDep
+from app.models.enums import CheckoutOrigin, VisitStatus
 from app.schemas.common import Page, PaginationParams
 from app.schemas.visit import (
     VisitCancelRequest,
@@ -25,6 +25,7 @@ router = APIRouter(prefix="/visits", tags=["Visites"])
 
 def get_visit_filters(
     statut: VisitStatus | None = Query(default=None),
+    checkout_origin: CheckoutOrigin | None = Query(default=None),
     date_from: datetime | None = Query(default=None, description="Borne basse, `checked_in_at`."),
     date_to: datetime | None = Query(default=None, description="Borne haute, `checked_in_at`."),
     search: str | None = Query(
@@ -41,6 +42,7 @@ def get_visit_filters(
 ) -> VisitFilters:
     return VisitFilters(
         statut=statut,
+        checkout_origin=checkout_origin,
         date_from=date_from,
         date_to=date_to,
         search=search,
@@ -66,7 +68,7 @@ def get_pagination(
     summary="Enregistre une nouvelle visite",
 )
 async def create_visit(
-    payload: VisitCreate, service: VisitServiceDep, current_user: CurrentUser
+    payload: VisitCreate, service: VisitServiceDep, current_user: CurrentUser, scope: Scope
 ) -> VisitRead:
     """L'identité arrive par `visitor` **ou** par `visitor_id`, jamais les deux.
 
@@ -83,6 +85,9 @@ async def create_visit(
     un `409 VISITOR_ALREADY_PRESENT` portant la visite ouverte et son heure d'entrée,
     de quoi proposer la clôture.
     """
+    payload = payload.model_copy(
+        update={"organization_id": scope.resolve(payload.organization_id)}
+    )
     visit = await service.create_visit(payload, current_user)
     return VisitRead.model_validate(visit)
 
@@ -90,10 +95,11 @@ async def create_visit(
 @router.get("", response_model=Page[VisitRead], summary="Liste paginée et filtrée des visites")
 async def list_visits(
     service: VisitServiceDep,
-    current_user: CurrentUser,
+    scope: Scope,
     filters: Annotated[VisitFilters, Depends(get_visit_filters)],
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ) -> Page[VisitRead]:
+    filters = filters.model_copy(update={"organization_id": scope.organization_id})
     return await service.list_visits(filters, pagination)
 
 
@@ -121,7 +127,7 @@ async def sync_visits(
 )
 async def export_visits(
     service: VisitServiceDep,
-    current_admin: AdminUser,
+    scope: AdminScope,
     filters: Annotated[VisitFilters, Depends(get_visit_filters)],
     export_format: ExportFormat = Query(
         default="csv", alias="format", description="`csv` uniquement pour le moment."
@@ -134,7 +140,8 @@ async def export_visits(
     `visits_export_max_rows` (paramètres système), l'export est refusé plutôt que
     tronqué en silence.
     """
-    contenu, media_type = await service.export_visits(filters, export_format, current_admin)
+    filters = filters.model_copy(update={"organization_id": scope.organization_id})
+    contenu, media_type = await service.export_visits(filters, export_format, scope.user)
     nom = export_filename(export_format, datetime.now(UTC))
     return Response(
         content=contenu,
@@ -143,11 +150,35 @@ async def export_visits(
     )
 
 
+@router.get(
+    "/auto-closed",
+    response_model=Page[VisitRead],
+    summary="Liste les visites clôturées automatiquement",
+)
+async def list_auto_closed_visits(
+    service: VisitServiceDep,
+    scope: Scope,
+    pagination: Annotated[PaginationParams, Depends(get_pagination)],
+    day: date | None = Query(
+        default=None, alias="date", description="Jour de clôture automatique."
+    ),
+) -> Page[VisitRead]:
+    date_from = datetime.combine(day, time.min, tzinfo=UTC) if day else None
+    date_to = date_from + timedelta(days=1) - timedelta(microseconds=1) if date_from else None
+    filters = VisitFilters(
+        checkout_origin=CheckoutOrigin.AUTOMATIC,
+        date_from=date_from,
+        date_to=date_to,
+    )
+    filters = filters.model_copy(update={"organization_id": scope.organization_id})
+    return await service.list_visits(filters, pagination)
+
+
 @router.get("/{visit_id}", response_model=VisitRead, summary="Détail d'une visite")
 async def get_visit(
     visit_id: uuid.UUID, service: VisitServiceDep, current_user: CurrentUser
 ) -> VisitRead:
-    return VisitRead.model_validate(await service.get_visit(visit_id))
+    return VisitRead.model_validate(await service.get_visit(visit_id, current_user))
 
 
 @router.put("/{visit_id}/checkout", response_model=VisitRead, summary="Clôture une visite")

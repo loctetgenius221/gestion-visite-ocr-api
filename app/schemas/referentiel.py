@@ -23,6 +23,7 @@ class ArchivableRead(ORMModel):
 
 class ServiceRead(ArchivableRead):
     id: uuid.UUID
+    organization_id: uuid.UUID | None = None
     name: str
     code: str
     floor: str | None = None
@@ -46,6 +47,10 @@ class AgentRead(ArchivableRead):
 class PurposeRead(ArchivableRead):
     id: uuid.UUID
     libelle: str
+    organization_id: uuid.UUID | None = Field(
+        default=None,
+        description="`null` pour un motif commun, proposé à toutes les organisations.",
+    )
 
 
 # --- Écriture (rôle ADMIN) ---------------------------------------------------
@@ -54,6 +59,7 @@ class PurposeRead(ArchivableRead):
 class ServiceCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    organization_id: uuid.UUID | None = None
     name: str = Field(min_length=1, max_length=200)
     code: str = Field(min_length=1, max_length=50)
     floor: str | None = Field(default=None, max_length=50)
@@ -63,6 +69,7 @@ class ServiceCreate(BaseModel):
 class ServiceUpdate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
+    organization_id: uuid.UUID | None = None
     name: str | None = Field(default=None, min_length=1, max_length=200)
     code: str | None = Field(default=None, min_length=1, max_length=50)
     floor: str | None = Field(default=None, max_length=50)
@@ -91,6 +98,14 @@ class PurposeCreate(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)
 
     libelle: str = Field(min_length=1, max_length=200)
+    organization_id: uuid.UUID | None = Field(
+        default=None,
+        description=(
+            "Organisation propriétaire. Ignoré pour un administrateur d'organisation, "
+            "qui ne crée que dans la sienne ; `null` chez l'administrateur de "
+            "plateforme crée un motif commun à toutes les organisations."
+        ),
+    )
 
 
 class PurposeUpdate(BaseModel):

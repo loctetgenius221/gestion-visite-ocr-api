@@ -1,4 +1,4 @@
-# Guide d'implémentation — construire SIGV de A à Z
+# Guide d'implémentation — construire Fp-visites de A à Z
 
 Ce document explique **comment cette application a été construite**, brique par
 brique, et **pourquoi** chaque choix a été fait. Il est écrit pour être suivi par
@@ -9,7 +9,7 @@ Les trois autres documents du dépôt ont un rôle différent :
 
 | Document | Répond à la question |
 |---|---|
-| [`SPEC_BACKEND_SIGV_OCR_MRZ.md`](SPEC_BACKEND_SIGV_OCR_MRZ.md) | Que doit faire l'application ? |
+| [`SPEC_BACKEND_FP_VISITES_OCR_MRZ.md`](SPEC_BACKEND_FP_VISITES_OCR_MRZ.md) | Que doit faire l'application ? |
 | [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) | Pourquoi telle décision plutôt que telle autre ? (format ADR, court) |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md) | Comment la mettre en production ? |
 | **Ce guide** | **Comment la reconstruire depuis une page blanche ?** |
@@ -31,11 +31,10 @@ Les trois autres documents du dépôt ont un rôle différent :
 
 ## 1. Ce que fait l'application
 
-SIGV — *Système Intelligent de Gestion des Visites* — équipe le poste d'accueil
-d'une administration. Un agent de contrôle enregistre les visiteurs, et pour
-éviter la saisie manuelle de l'identité, **il photographie la pièce d'identité :
-le serveur en extrait automatiquement le nom, le prénom, la date de naissance, le
-numéro de document et le NIN.**
+Fp-visites équipe le poste d'accueil d'une administration. Un agent de contrôle
+enregistre les visiteurs, et pour éviter la saisie manuelle de l'identité,
+**il photographie la pièce d'identité : le serveur en extrait automatiquement le
+nom, le prénom, la date de naissance, le numéro de document et le NIN.**
 
 Le parcours complet d'un enregistrement :
 
@@ -103,8 +102,8 @@ uv run pytest              # exécute dans l'environnement du projet
 ```bash
 # Debian / Ubuntu
 sudo apt install postgresql
-sudo -u postgres psql -c "CREATE USER sivg WITH PASSWORD 'motdepasse';"
-sudo -u postgres psql -c "CREATE DATABASE sivg OWNER sivg ENCODING 'UTF8';"
+sudo -u postgres psql -c "CREATE USER sigv WITH PASSWORD 'motdepasse';"
+sudo -u postgres psql -c "CREATE DATABASE sigv OWNER sigv ENCODING 'UTF8';"
 ```
 
 Sous Windows, l'installateur officiel EnterpriseDB fait le travail. Notez le mot
@@ -388,8 +387,8 @@ autonome et vérifiable.
 ### 5.1 Initialiser le projet
 
 ```bash
-uv init sivg-backend --package
-cd sivg-backend
+uv init fp-visites-backend --package
+cd fp-visites-backend
 uv add "fastapi[standard]" "sqlalchemy[asyncio]" asyncpg alembic pydantic-settings \
        "python-jose[cryptography]" "passlib[bcrypt]" python-multipart
 uv add --dev pytest pytest-asyncio pytest-cov httpx aiosqlite ruff mypy

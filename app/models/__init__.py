@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from app.models.audit_log import AuditLog
+from app.models.automatic_closure_run import AutomaticClosureRun
 from app.models.base import Base
 from app.models.enums import (
+    CheckoutOrigin,
     DocumentType,
+    ForgottenDocumentStatus,
     MrzFormat,
     RecordStatus,
     Sexe,
@@ -11,6 +14,8 @@ from app.models.enums import (
     UserStatus,
     VisitStatus,
 )
+from app.models.forgotten_document import ForgottenDocumentCase
+from app.models.organization import Organization
 from app.models.referentiel import Agent, Purpose, Service
 from app.models.refresh_token import RevokedToken
 from app.models.setting import SystemSetting
@@ -22,9 +27,14 @@ from app.models.visitor import Visitor
 __all__ = [
     "Agent",
     "AuditLog",
+    "AutomaticClosureRun",
     "Base",
+    "CheckoutOrigin",
     "DocumentType",
+    "ForgottenDocumentCase",
+    "ForgottenDocumentStatus",
     "MrzFormat",
+    "Organization",
     "Purpose",
     "RecordStatus",
     "RevokedToken",

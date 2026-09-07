@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from httpx import AsyncClient
+from sqlalchemy import select
 
 
 async def _creer_visite(client: AsyncClient, auth_headers: dict[str, str], seeded: dict) -> dict:
@@ -316,16 +317,35 @@ class TestSuppression:
         assert instantane["checked_in_at"] is not None
 
     async def test_le_visiteur_survit_a_la_suppression_de_sa_visite(
-        self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict
+        self,
+        client: AsyncClient,
+        admin_headers: dict[str, str],
+        auth_headers,
+        seeded: dict,
+        session,
     ) -> None:
-        """Sa fiche sert aux autres passages : seule la visite est détruite."""
-        visite = await _creer_visite(client, auth_headers, seeded)
+        """Seule la visite est détruite : la fiche visiteur reste en base.
 
+        Elle sort en revanche de la recherche du poste, qui ne montre que les
+        personnes déjà venues **dans l'organisation** : sans visite, plus rien ne
+        rattache cette personne à la structure. C'est voulu — la fiche est commune
+        à toutes les organisations, et la rendre visible sans passage rendrait le
+        fichier des visiteurs consultable par n'importe quel poste.
+
+        La personne n'est pas perdue pour autant : à sa prochaine venue, le scan
+        de sa pièce retrouve la fiche existante par son numéro de document.
+        """
+        from app.models.visitor import Visitor
+
+        visite = await _creer_visite(client, auth_headers, seeded)
         await client.delete(f"/visits/{visite['id']}", headers=admin_headers)
+
+        fiches = (await session.execute(select(Visitor).where(Visitor.nom == "Diop"))).scalars()
+        assert [fiche.nom for fiche in fiches] == ["Diop"]
 
         recherche = await client.get("/visitors?search=Diop", headers=auth_headers)
         assert recherche.status_code == 200
-        assert [v["nom"] for v in recherche.json()["items"]] == ["Diop"]
+        assert recherche.json()["items"] == []
 
     async def test_la_visite_supprimee_sort_des_statistiques(
         self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict
@@ -459,12 +479,17 @@ class TestAuditLog:
         assert {"visit.created", "visit.checkout"} <= actions
 
     async def test_la_creation_de_compte_est_tracee_avec_son_auteur(
-        self, client: AsyncClient, admin_headers: dict[str, str], admin
+        self, client: AsyncClient, admin_headers: dict[str, str], admin, seeded: dict
     ) -> None:
         await client.post(
             "/users",
             headers=admin_headers,
-            json={"nom": "Traçable", "identifiant": "agent099", "role": "AGENT_CONTROLE"},
+            json={
+                "nom": "Traçable",
+                "identifiant": "agent099",
+                "role": "AGENT_CONTROLE",
+                "organization_id": str(seeded["organization"].id),  # type: ignore[union-attr]
+            },
         )
 
         journal = await client.get("/audit-logs?action=user.created", headers=admin_headers)

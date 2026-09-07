@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from sqlalchemy import ForeignKey, String, Uuid
+from sqlalchemy import ForeignKey, String, UniqueConstraint, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, JSONType, TimestampMixin, UUIDPrimaryKeyMixin
@@ -20,11 +20,28 @@ class SystemSetting(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     Ne mettez ici que ce qui relève du **métier** (délais, seuils). Tout ce qui
     touche à l'infrastructure ou aux secrets reste dans les variables
     d'environnement : une valeur en base est modifiable par une route HTTP.
+
+    Deux portées cohabitent, distinguées par `organization_id` — voir la colonne.
     """
 
     __tablename__ = "system_settings"
+    __table_args__ = (
+        UniqueConstraint(
+            "organization_id", "key", name="uq_system_settings_organization_id_key"
+        ),
+    )
 
-    key: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    # `NULL` : réglage de plateforme, qui sert de valeur de repli à tout le monde.
+    # Renseigné : surcharge propre à une organisation, et seules les clés de
+    # `CLES_ORGANISATION` peuvent l'être — un poste d'accueil règle son heure de
+    # clôture, il ne règle pas le seuil de verrouillage des comptes.
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    key: Mapped[str] = mapped_column(String(100), index=True, nullable=False)
     # Encapsulée dans un objet JSON (`{"value": ...}`) plutôt que stockée nue : les
     # scalaires JSON au niveau racine ne sont pas portables entre PostgreSQL et SQLite.
     value: Mapped[dict[str, Any]] = mapped_column(JSONType, nullable=False)

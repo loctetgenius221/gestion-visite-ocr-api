@@ -1,6 +1,6 @@
-# Décisions d'architecture — Backend SIGV
+# Décisions d'architecture — Backend Fp-visites
 
-Ce document trace les décisions non arbitrées par `SPEC_BACKEND_SIGV_OCR_MRZ.md`,
+Ce document trace les décisions non arbitrées par `SPEC_BACKEND_FP_VISITES_OCR_MRZ.md`,
 conformément à la consigne §11 de la spec. Chaque décision indique son contexte,
 le choix retenu et ce qui la ferait reconsidérer.
 
@@ -830,3 +830,132 @@ exiger un motif du référentiel quand aucune personne n'est désignée — le m
 alors la seule chose qui explique la venue — mais c'est un durcissement qui se décide
 sur des données réelles, pas par anticipation. À rouvrir si les visites sans agent
 s'avèrent majoritairement assorties d'un motif libre inexploitable.
+
+
+## ADR-020 — Le périmètre d'organisation est résolu une fois, jamais recalculé
+
+**Contexte.** Le passage au multi-structures a ajouté `organization_id` sur les
+comptes, les services et les visites, puis un rôle `ORG_ADMIN`. Le cloisonnement,
+lui, a été écrit à la main dans chaque route — et de trois façons différentes :
+
+```python
+if current_user.organization_id is not None:          # visites
+if current_user.role in (ORG_ADMIN, SUPERVISEUR):     # référentiels
+if admin.role == ORG_ADMIN and admin.organization_id != organization_id:  # organisations
+```
+
+Le résultat est celui qu'on peut attendre d'un contrôle recopié : les routes
+oubliées n'ont rien cloisonné du tout. `GET /visitors` exposait l'identité, le
+numéro de pièce et le NIN des visiteurs de **toutes** les structures à n'importe
+quel agent d'accueil. `GET /services` et `GET /agents` ne filtraient que pour
+`ORG_ADMIN` et `SUPERVISEUR` : `AGENT_CONTROLE`, destinataire principal de ces
+listes, recevait l'annuaire complet du parc. Le journal d'audit et les réglages
+système, ouverts à `ORG_ADMIN`, étaient globaux.
+
+La deuxième formulation porte la faute la plus intéressante : `organization_id is
+not None` fait de « pas d'organisation » un synonyme de « toutes les
+organisations ». C'est vrai pour l'administrateur de plateforme, et faux pour
+n'importe quel compte mal rattaché — qui obtenait alors la vue d'ensemble.
+
+**Décision.** Le périmètre devient une dépendance unique, `TenantScope`, résolue
+une fois par requête et injectée :
+
+- `organization_id is None` signifie accès global, et **seul** le rôle `ADMIN`
+  l'obtient ;
+- tout autre rôle sans rattachement est refusé à la porte
+  (`403 UNSCOPED_ACCOUNT`) plutôt que laissé traverser l'application ;
+- `scope.resolve(demandé)` renvoie l'organisation à filtrer, et **refuse**
+  explicitement une demande hors périmètre (`403 CROSS_ORGANIZATION_FORBIDDEN`)
+  au lieu de la réécrire en silence ;
+- `scope.ensure_can_access(org)` vérifie une ressource déjà chargée, **après** son
+  chargement, pour qu'une ressource inexistante réponde 404 et non 403 — l'inverse
+  confirmerait l'existence d'une structure à qui n'y a pas accès.
+
+Les colonnes `services.organization_id` et `visits.organization_id` passent
+`NOT NULL` : une ligne sans organisation échapperait à tous les filtres, et
+n'apparaîtrait dans la liste d'aucun poste de contrôle. `users.organization_id`
+reste nullable — c'est ce qui définit l'administrateur de plateforme.
+
+**Ce qu'on gagne.** Le router ne peut plus se tromper : il ne décide plus rien, il
+transmet un périmètre. Une route neuve qui oublie d'injecter `Scope` ne compile
+pas silencieusement en route ouverte — elle n'a simplement aucun filtre à passer
+au repository, ce qui se voit à la relecture.
+
+**Ce qu'on perd.** Un appelant global doit désormais nommer l'organisation quand
+il écrit (`400 ORGANIZATION_REQUIRED` sinon). C'est une friction réelle sur les
+scripts d'amorçage — `create_user`, `import_annuaire` et le seed prennent tous un
+`--organisation`. Elle est préférable à des données créées hors de toute
+structure, invisibles ensuite.
+
+### La fiche visiteur reste commune, sa consultation ne l'est pas
+
+Une même personne peut se présenter dans plusieurs ministères. Lui créer une fiche
+par organisation dupliquerait son identité — donc son numéro de pièce et son NIN —
+autant de fois qu'elle a d'interlocuteurs, et multiplierait d'autant la surface
+d'une fuite. `Visitor` reste donc **global**, sans `organization_id`.
+
+Le cloisonnement porte sur le **lien de visite** : `GET /visitors` ne remonte que
+les personnes ayant au moins une visite dans l'organisation de l'appelant, et la
+dernière venue affichée est elle aussi bornée — sans quoi la fiche révélerait
+qu'une personne s'est présentée ailleurs, et quand.
+
+Conséquence assumée : une personne dont l'unique visite est supprimée disparaît de
+la recherche. Elle n'est pas perdue pour autant — le scan de sa pièce retrouve sa
+fiche par son numéro de document, qui est la voie normale d'un nouvel
+enregistrement.
+
+### Deux portées de réglages, pas une
+
+`system_settings` était une table clé/valeur unique pour la plateforme, et
+`ORG_ADMIN` y avait accès en écriture : il réglait le verrouillage des comptes de
+tout le parc. La table porte maintenant un `organization_id` nullable, et les clés
+se répartissent en deux familles :
+
+| Portée | Paramètres | Justification |
+|---|---|---|
+| Organisation | heure et activation de la clôture automatique, seuil de visite longue | Un ministère ferme à 17:00, un port à 20:00. C'est de l'exploitation. |
+| Plateforme | verrouillage des comptes, rétention des images, plafond d'export | Politique de sécurité et obligation légale : elles s'imposent à toutes les structures ensemble. |
+
+Une clé hors portée est **refusée** et non ignorée : croire avoir durci le
+verrouillage des comptes alors que rien n'a bougé serait pire que l'erreur.
+
+La lecture se fait en cascade — défaut du schéma, valeur de plateforme, surcharge
+de la structure — et la réponse expose `organization_overrides`, la liste de ce
+qui est réellement surchargé. Retirer une surcharge
+(`DELETE /settings/overrides/{clé}`) réaligne sur la plateforme **et sur ses
+évolutions futures** ; recopier la valeur du jour par un `PUT` la figerait, et la
+structure cesserait de bénéficier des ajustements ultérieurs sans que personne ne
+s'en aperçoive.
+
+### Désactiver une organisation coupe l'accès, sans toucher aux comptes
+
+`Organization.is_active` existait sans être appliqué nulle part : le drapeau était
+décoratif. Il est désormais vérifié à **chaque résolution de token**, et pas
+seulement au login — sans quoi l'opération n'aurait pris effet qu'à l'expiration
+des sessions en cours, soit jusqu'à sept jours.
+
+Aucun compte n'est modifié au passage : la réactivation rend l'accès tel qu'il
+était, ce qu'une désactivation compte par compte ne permettrait pas.
+
+La désactivation est refusée tant que des visiteurs sont présents
+(`409 ORGANIZATION_HAS_ACTIVE_VISITS`). Couper l'accès à ce moment-là empêcherait
+les agents d'enregistrer les sorties, et le registre resterait ouvert sur des
+visites qu'aucune route ne saurait plus clôturer.
+
+### Le logo est validé par son contenu, pas par son nom
+
+`logo_url` était une chaîne libre écrite par le client, et la seule validation
+d'image du projet ne regardait que l'extension du nom de fichier. Un document HTML
+renommé `logo.png` était accepté, stocké, puis servi par `StaticFiles` **depuis
+l'origine du dashboard** — soit un script exécuté avec la session de
+l'administrateur qui l'ouvre.
+
+`POST /organizations/{id}/logo` décide du format d'après les octets (Pillow), puis
+réencode l'image en PNG borné à 512 px. Le réencodage n'est pas cosmétique : il
+reconstruit le fichier à partir des seuls pixels décodés, ce qui laisse tomber
+EXIF, profils et blocs de commentaire — où l'octet arbitraire se cache
+d'ordinaire. SVG est refusé : c'est un document XML qui peut porter du script.
+
+`logo_url` devient en lecture seule sur les routes de mise à jour. Exposé en
+écriture, il permettrait à un administrateur d'organisation de faire pointer
+chaque écran du dashboard vers une ressource tierce — donc un traceur.
