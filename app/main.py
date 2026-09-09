@@ -16,6 +16,7 @@ from app.core.database import dispose_engine, engine
 from app.core.handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
+from app.core.routing import StrictQueryParamsRoute
 from app.routers import (
     audit_logs,
     auth,
@@ -91,6 +92,12 @@ def create_app() -> FastAPI:
             500: {"model": ErrorResponse, "description": "Erreur serveur"},
         },
     )
+
+    # Les routes déclarées directement sur l'application (sondes de santé) n'héritent
+    # pas d'un routeur : leur classe de route se règle ici. Placé après la
+    # construction de `FastAPI`, donc sans effet sur `/docs` et `/openapi.json`,
+    # déjà montés — c'est voulu, Swagger UI ajoute ses propres paramètres.
+    application.router.route_class = StrictQueryParamsRoute
 
     application.add_middleware(RequestContextMiddleware)
     if "*" not in settings.trusted_hosts_list:

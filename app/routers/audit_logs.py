@@ -18,11 +18,16 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 
 from app.core.deps import AdminScope, SessionDep
+from app.core.routing import StrictQueryParamsRoute
 from app.schemas.audit import AuditLogFilters, AuditLogRead
 from app.schemas.common import Page, PaginationParams
 from app.services.audit_service import AuditService
 
-router = APIRouter(prefix="/audit-logs", tags=["Administration — Audit"])
+router = APIRouter(
+    prefix="/audit-logs",
+    tags=["Administration — Audit"],
+    route_class=StrictQueryParamsRoute,
+)
 
 
 def get_audit_filters(

@@ -3,8 +3,8 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import ForeignKey, String, UniqueConstraint, Uuid
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import ForeignKey, String, UniqueConstraint, Uuid, select
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from app.models.base import ArchivableMixin, Base, TimestampMixin, UUIDPrimaryKeyMixin
 
@@ -62,6 +62,18 @@ class Agent(UUIDPrimaryKeyMixin, TimestampMixin, ArchivableMixin, Base):
         ForeignKey("services.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
+    )
+
+    # Un agent n'appartient à une organisation que par son service : la colonne
+    # n'existe pas en base, et la dupliquer imposerait de la tenir à jour à chaque
+    # changement de rattachement. Elle est donc **calculée dans le SELECT**, ce qui
+    # la rend lisible depuis `AgentRead` sans charger la relation `service` — un
+    # chargement paresseux serait de toute façon interdit en contexte async.
+    organization_id: Mapped[uuid.UUID] = column_property(
+        select(Service.organization_id)
+        .where(Service.id == service_id)
+        .correlate_except(Service)
+        .scalar_subquery()
     )
 
     service: Mapped[Service] = relationship("Service", back_populates="agents")

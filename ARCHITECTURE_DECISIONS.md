@@ -959,3 +959,172 @@ d'ordinaire. SVG est refusé : c'est un document XML qui peut porter du script.
 `logo_url` devient en lecture seule sur les routes de mise à jour. Exposé en
 écriture, il permettrait à un administrateur d'organisation de faire pointer
 chaque écran du dashboard vers une ressource tierce — donc un traceur.
+
+## ADR-021 — Un paramètre de requête inconnu est refusé, pas ignoré
+
+**Contexte.** ADR-020 a fait de `TenantScope` le seul juge du périmètre, et
+`scope.resolve()` refuse explicitement une organisation hors périmètre plutôt que
+de la réécrire en silence — au motif qu'« un filtre ignoré sans le dire donnerait
+à l'appelant l'illusion d'avoir consulté ce qu'il demandait ».
+
+Cette garantie s'arrêtait une couche trop tard. Les routes de listing appelaient
+`scope.organization_id`, jamais `scope.resolve(...)` : elles ne déclaraient donc
+aucun paramètre `organization_id`, et Starlette laisse passer sans un mot ce
+qu'une route ne déclare pas. `GET /visits?organization_id=<structure>` répondait
+`200` avec le registre **entier** de la plateforme, `total` identique à l'appel
+sans filtre. Le dashboard affichait les chiffres de toutes les structures sous le
+nom d'une seule, et rien dans la réponse ne permettait de s'en apercevoir —
+l'illusion exacte que l'ADR précédent condamne, obtenue par un autre chemin.
+
+Un `403` aurait été bruyant. Un `400` l'aurait été. Un `200` faux ne l'est pas :
+le défaut n'a été trouvé qu'au troisième écran du dashboard, par comparaison de
+totaux.
+
+**Décision.** Deux moitiés, indissociables.
+
+D'abord, le paramètre existe : `organization_id` est déclaré par une dépendance
+unique, `OrganizationFilter`, qui le résout par `scope.resolve()`. Il porte
+partout le même nom, la même description et la même règle — l'`ADMIN` de
+plateforme le fait varier, tout autre rôle ne peut demander que le sien. Le
+dashboard envoie donc le même paramètre quel que soit le rôle connecté, sans
+brancher son code dessus.
+
+Ensuite, l'inconnu est refusé. `StrictQueryParamsRoute` compare la query string
+aux paramètres que la route déclare — les siens et ceux de ses dépendances — et
+lève le `RequestValidationError` habituel sur tout intrus. La réponse est un
+`400 VALIDATION_ERROR` : la spec §5.6 réserve le `422` aux échecs **métier**, et
+une query string fautive n'en est pas un. C'est déjà le code rendu par `?page=0`,
+ce qui laisse au client un seul cas à traiter. `details[0].ctx.parametres_acceptes`
+énumère ce que la route accepte, de quoi distinguer la faute de frappe du filtre
+que le backend n'expose pas encore.
+
+**Ce qu'on gagne.** Un filtre absent devient visible immédiatement, au lieu de se
+déguiser en réponse correcte. La classe de route est posée sur tous les routeurs,
+donc la garantie couvre aussi les routes que personne n'a pensé à vérifier — c'est
+le même raisonnement que pour `TenantScope` : une règle appliquée à un seul
+endroit plutôt que réécrite par route.
+
+**Ce qu'on paie.** C'est une rupture pour les clients qui décoraient leurs URLs :
+anti-cache `?_=169…`, `utm_*`, restes de copier-coller passaient jusqu'ici pour
+des requêtes valides. Le prix est assumé — ces paramètres ne signifiaient rien, et
+les tolérer revenait à garder ouverte la porte par laquelle le défaut est entré.
+
+`AgentRead` expose au passage `organization_id`. Ce n'est pas une colonne
+d'`agents` : un agent n'appartient à une structure que par son service, et
+dupliquer la valeur imposerait de la tenir à jour à chaque changement de
+rattachement. Elle est calculée dans le `SELECT` (`column_property`), ce qui la
+rend lisible sans charger la relation — un chargement paresseux serait de toute
+façon interdit en contexte async. Les écritures rechargent explicitement l'agent :
+une ligne tout juste insérée ne porte pas encore la valeur.
+
+
+## ADR-022 — L'import en masse est un plan validé, pas un fichier avalé
+
+**Contexte.** Remplir l'annuaire d'un ministère à la main, service par service et
+agent par agent, ne tient pas : un `POST /agents` par personne, c'est plusieurs
+centaines de formulaires. Le besoin était donc admis d'avance ; restait à décider
+de sa forme.
+
+Le projet partait avec un atout et un piège. L'atout : `app/import_annuaire.py`
+fait déjà tout le travail difficile — lecture, normalisation, déduplication,
+idempotence, rapport ligne à ligne. Le piège : ce script est un outil
+d'**opérateur**, lancé par quelqu'un qui a déjà l'accès base. Il écrit
+directement dans la session, sans une ligne d'audit ; il ne connaît pas
+`TenantScope` et fait confiance à un `--organisation` passé en argument ; et il
+devine les services par acronyme du libellé de département, une heuristique dont
+sa propre docstring exige qu'on relise le `--dry-run` à l'œil.
+
+Aucune de ces trois libertés n'est transposable à un bouton de dashboard.
+
+**Décision.** Un module distinct, et trois partis pris.
+
+*Deux fichiers, pas un.* Un modèle « Services », un modèle « Agents » qui
+référence les codes du premier. L'heuristique d'acronyme disparaît :
+l'administrateur dit ce qu'il veut au lieu qu'on le devine. L'import d'agents ne
+crée jamais de service au passage — une faute de frappe fabriquerait une
+direction fantôme, que plus personne ne viendrait nettoyer.
+
+*Le `.xlsx` plutôt que le CSV.* Le format n'est pas une coquetterie : un CSV
+laisse trois façons de casser son fichier sans s'en apercevoir — l'ouvrir dans
+Excel, enregistrer, et le voilà en ANSI, séparé par des virgules, avec le code
+`007` devenu le nombre 7. Le classeur verrouille l'encodage, le séparateur et le
+type des colonnes. C'est aussi ce qui justifie la dépendance `openpyxl`, seule
+ajoutée : `pandas` était présent, mais **en transitif** via paddleocr, et
+s'appuyer dessus aurait été un accident en attente.
+
+*Le plan est le contrat.* La prévisualisation reçoit le classeur et rend ce qui
+serait fait ; l'application reçoit du **JSON** et le fait. Le détour évite qu'un
+fichier change entre ce que l'administrateur a vu et ce qu'il confirme, et rend
+la grille du dashboard corrigeable ligne à ligne. Les deux réponses ont la même
+forme, parce qu'un import est tout ou rien : ce qui est fait est ce qui avait été
+annoncé.
+
+**Tout ou rien, à rebours de `sync_visits`.** La synchronisation hors-ligne
+commite item par item, et c'est justifié là-bas : les visites n'existent que sur
+la tablette, en perdre une la perd pour de bon. Un classeur, lui, se corrige et se
+retéléverse. Une seule ligne en erreur refuse donc tout (`IMPORT_PLAN_REJECTED`),
+plutôt que de laisser un import à moitié appliqué dont personne ne saurait dire où
+il s'est arrêté.
+
+**Ce que l'import ne fait jamais.** Il ne supprime ni n'archive : un fichier
+partiel ferait disparaître la moitié de l'annuaire. Une cellule vide signifie « je
+ne renseigne pas », jamais « efface » — sans quoi l'administrateur qui ne remplit
+que la colonne Fonction viderait tous les bureaux au passage.
+
+**Ce qu'il a vraiment fallu écrire.** La hiérarchie. Un service référence son
+parent par code, et ce parent peut être créé par une autre ligne du même
+fichier. `_verifier_parent`, côté création unitaire, ne sait faire que le cas
+persisté — il interroge la base, où le second n'existe pas encore. Le graphe est
+donc reconstruit sur le **lot fusionné à la base**, les lignes du fichier écrasant
+les rattachements qu'elles redéfinissent, puis trié en vagues pour qu'un parent
+soit toujours inséré avant son enfant. Le construire sur le seul fichier
+laisserait passer un cycle qui se referme par la base : `A → B` au fichier, `B → A`
+déjà en place. Et un cycle n'est pas véniel — `_build_tree` reparcourt la
+hiérarchie à chaque `GET /services`.
+
+**Deux pièges rencontrés, tous deux silencieux.**
+
+Une cellule contenant une **formule non calculée** se lit `None` : la ligne serait
+importée amputée, ou ignorée, sans que rien ne le dise. Le classeur est donc ouvert
+deux fois — valeurs en cache d'un côté, formules brutes de l'autre — pour
+distinguer « vide » de « formule jamais calculée » et refuser le fichier en le
+disant. Le cas ne vient pas d'Excel, qui met toujours ses résultats en cache, mais
+des classeurs produits par un script.
+
+L'**injection de formule**, ensuite. Un nom d'agent commençant par `=`, `+`, `-` ou
+`@` devient une formule à l'ouverture du tableur. Le risque n'était pas théorique :
+les noms importés ressortent par `visits_to_csv`, dans l'export du registre qu'un
+administrateur ouvre justement dans Excel. La donnée reste intacte en base — c'est
+peut-être un vrai nom — et est neutralisée à l'**écriture**, seul endroit où elle
+devient dangereuse. Le même raisonnement que le réencodage du logo (ADR-020) : on
+ne fait pas confiance à ce qui traverse.
+
+**Le nom du fichier ne décide de rien.** La première version refusait tout ce qui
+ne finissait pas par `.xlsx`. Un test l'a démenti dès la première utilisation
+réelle : un client HTTP qui ignore `Content-Disposition` enregistre le modèle sous
+un nom de son cru — vu en `export.csv` — et le renvoyer se heurtait alors à un
+refus portant sur son extension, alors que le classeur était intact, octet pour
+octet celui que la route venait de servir.
+
+La validation porte donc sur la signature ZIP. La règle joue dans les deux sens :
+un vrai CSV renommé `.xlsx` reste refusé, un `.xlsx` valide mal nommé passe.
+L'extension ne sert plus qu'à rédiger le message — « le fichier envoyé est un
+fichier texte CSV » aide, « format non supporté » n'aide pas. C'est la règle du
+logo (ADR-020), appliquée dans la direction qu'on avait oubliée : ne pas faire
+confiance au nom, c'est aussi ne pas le laisser condamner un contenu correct.
+
+La route de téléchargement émet par ailleurs `filename` **et** `filename*`
+(RFC 5987). Cela ne sauve pas un client qui ne lit pas l'en-tête du tout — un
+`fetch` suivi d'un blob, par exemple, où c'est l'attribut `download` qui nomme le
+fichier — d'où la validation par le contenu, qui elle ne dépend d'aucun client.
+
+**Effet de bord assumé.** `organization_for_write` quitte `ReferentielAdminService`
+pour le niveau module, et vérifie désormais que l'organisation désignée existe.
+Un `organization_id` inconnu fourni par l'ADMIN partait jusqu'à la contrainte de
+clé étrangère et ressortait en `500` ; il répond `404`. `POST /services` et
+`POST /purposes` en profitent au passage — c'était le même trou.
+
+**Le garde-fou.** `referentiel_import_max_rows` (5 000 par défaut), symétrique de
+`visits_export_max_rows`, et volontairement plus bas : l'import écrit en une seule
+transaction, là où l'export ne fait que lire. Réglage de **plateforme**, pas
+d'organisation : c'est une limite technique, pas un paramètre de poste d'accueil.

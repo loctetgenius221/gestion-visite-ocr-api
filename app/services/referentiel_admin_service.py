@@ -18,6 +18,7 @@ from app.core.errors import (
     ConflictError,
     CrossOrganizationError,
     DuplicateReferentielError,
+    OrganizationNotFoundError,
     OrganizationRequiredError,
     PurposeNotFoundError,
     ServiceNotFoundError,
@@ -26,6 +27,7 @@ from app.core.errors import (
 from app.models.enums import RecordStatus, UserRole
 from app.models.referentiel import Agent, Purpose, Service
 from app.models.user import User
+from app.repositories.organization_repository import OrganizationRepository
 from app.repositories.referentiel_repository import (
     AgentRepository,
     PurposeRepository,
@@ -42,6 +44,48 @@ from app.schemas.referentiel import (
 from app.services.audit_service import AuditAction, AuditService, diff
 
 
+async def organization_for_write(
+    session: AsyncSession,
+    organization_id: uuid.UUID | None,
+    actor: User,
+    *,
+    obligatoire: bool = True,
+) -> uuid.UUID | None:
+    """Organisation dans laquelle écrire, selon le périmètre de l'acteur.
+
+    `obligatoire` distingue les référentiels rattachés — un service, et donc les
+    agents qu'il porte, appartient toujours à une structure — des motifs de
+    visite, dont `None` désigne au contraire un référentiel commun à toute la
+    plateforme. Sans ce contrôle, l'administrateur de plateforme créait des
+    services sans organisation, invisibles de tous les postes de contrôle.
+
+    L'existence de l'organisation n'est vérifiée que lorsque l'**ADMIN** la
+    désigne : c'est le seul cas où la valeur vient de la requête. Un identifiant
+    inconnu partait sinon jusqu'à la contrainte de clé étrangère, et ressortait en
+    `500` là où un `404` dit ce qui s'est passé. Pour tout autre rôle, la valeur
+    est celle du compte lui-même : elle existe par construction.
+
+    Vit au niveau du module, et non sur le service : l'import en masse applique
+    exactement la même règle, et deux formulations d'une règle de cloisonnement
+    finissent toujours par diverger (ADR-020).
+    """
+    if actor.role is UserRole.ADMIN:
+        if organization_id is None:
+            if obligatoire:
+                raise OrganizationRequiredError(
+                    "Précisez l'organisation : un service appartient toujours à une structure."
+                )
+            return None
+        if await OrganizationRepository(session).get_by_id(organization_id) is None:
+            raise OrganizationNotFoundError(details={"organization_id": str(organization_id)})
+        return organization_id
+    if actor.organization_id is None:
+        raise UnscopedAccountError()
+    if organization_id not in (None, actor.organization_id):
+        raise CrossOrganizationError()
+    return actor.organization_id
+
+
 class ReferentielAdminService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
@@ -53,7 +97,9 @@ class ReferentielAdminService:
     # --- Services ------------------------------------------------------------
 
     async def create_service(self, payload: ServiceCreate, actor: User) -> Service:
-        organization_id = self._organization_for_write(payload.organization_id, actor)
+        organization_id = await organization_for_write(
+            self.session, payload.organization_id, actor
+        )
         # Le doublon se juge **dans** l'organisation : « DRH » existe dans chaque
         # ministère, et un contrôle global interdirait à la deuxième structure
         # d'utiliser le code naturel de son propre service.
@@ -199,7 +245,7 @@ class ReferentielAdminService:
             metadata={"name": agent.name, "service_id": agent.service_id},
         )
         await self.session.commit()
-        return agent
+        return await self._agent_recharge(agent)
 
     async def update_agent(
         self, agent_id: uuid.UUID, payload: AgentUpdate, actor: User
@@ -239,7 +285,7 @@ class ReferentielAdminService:
             metadata={"changements": diff(avant, apres)},
         )
         await self.session.commit()
-        return agent
+        return await self._agent_recharge(agent)
 
     async def set_agent_status(
         self, agent_id: uuid.UUID, status: RecordStatus, actor: User
@@ -254,13 +300,13 @@ class ReferentielAdminService:
             metadata={"status": status.value},
         )
         await self.session.commit()
-        return agent
+        return await self._agent_recharge(agent)
 
     # --- Motifs --------------------------------------------------------------
 
     async def create_purpose(self, payload: PurposeCreate, actor: User) -> Purpose:
-        organization_id = self._organization_for_write(
-            payload.organization_id, actor, obligatoire=False
+        organization_id = await organization_for_write(
+            self.session, payload.organization_id, actor, obligatoire=False
         )
         if (
             await self.purposes.get_by_libelle(
@@ -351,6 +397,22 @@ class ReferentielAdminService:
             raise CrossOrganizationError("Accès limité aux services de votre organisation.")
         return service
 
+    async def _agent_recharge(self, agent: Agent) -> Agent:
+        """Relit l'agent depuis la base après écriture, avant de le rendre au router.
+
+        `Agent.organization_id` n'est pas une colonne : il est calculé dans le
+        `SELECT` à partir du service (voir le modèle). Un agent tout juste inséré
+        ne le porte donc pas, et un agent qui vient de changer de service le porte
+        périmé. Le lire dans cet état déclencherait un chargement paresseux —
+        interdit hors du greenlet SQLAlchemy, donc une `MissingGreenlet` en pleine
+        sérialisation de la réponse.
+
+        Le rechargement est explicite et payé une seule fois, sur les seules
+        écritures : les lectures, elles, ramènent déjà l'attribut avec la ligne.
+        """
+        await self.session.refresh(agent)
+        return agent
+
     async def _get_agent(self, agent_id: uuid.UUID, actor: User | None = None) -> Agent:
         agent = await self.agents.get_by_id(agent_id)
         if agent is None:
@@ -360,30 +422,6 @@ class ReferentielAdminService:
             if service is None or service.organization_id != actor.organization_id:
                 raise CrossOrganizationError("Accès limité aux agents de votre organisation.")
         return agent
-
-    @staticmethod
-    def _organization_for_write(
-        organization_id: uuid.UUID | None, actor: User, *, obligatoire: bool = True
-    ) -> uuid.UUID | None:
-        """Organisation dans laquelle écrire, selon le périmètre de l'acteur.
-
-        `obligatoire` distingue les référentiels rattachés — un service, et donc
-        les agents qu'il porte, appartient toujours à une structure — des motifs
-        de visite, dont `None` désigne au contraire un référentiel commun à toute
-        la plateforme. Sans ce contrôle, l'administrateur de plateforme créait des
-        services sans organisation, invisibles de tous les postes de contrôle.
-        """
-        if actor.role is UserRole.ADMIN:
-            if organization_id is None and obligatoire:
-                raise OrganizationRequiredError(
-                    "Précisez l'organisation : un service appartient toujours à une structure."
-                )
-            return organization_id
-        if actor.organization_id is None:
-            raise UnscopedAccountError()
-        if organization_id not in (None, actor.organization_id):
-            raise CrossOrganizationError()
-        return actor.organization_id
 
     async def _get_purpose(self, purpose_id: uuid.UUID, actor: User | None = None) -> Purpose:
         purpose = await self.purposes.get_by_id(purpose_id)

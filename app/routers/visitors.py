@@ -14,11 +14,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query
 
-from app.core.deps import CurrentUser, Scope, VisitServiceDep
+from app.core.deps import CurrentUser, OrganizationFilter, VisitServiceDep
+from app.core.routing import StrictQueryParamsRoute
 from app.schemas.common import Page, PaginationParams
 from app.schemas.visit import VisitorSearchResult
 
-router = APIRouter(prefix="/visitors", tags=["Visiteurs"])
+router = APIRouter(prefix="/visitors", tags=["Visiteurs"], route_class=StrictQueryParamsRoute)
 
 
 def get_pagination(
@@ -36,7 +37,7 @@ def get_pagination(
 async def search_visitors(
     service: VisitServiceDep,
     current_user: CurrentUser,
-    scope: Scope,
+    organization_id: OrganizationFilter,
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
     search: str = Query(
         min_length=3,
@@ -60,5 +61,5 @@ async def search_visitors(
     le champ permet de proposer la clôture directement, sans passer par l'erreur.
     """
     return await service.search_visitors(
-        search, pagination, current_user, organization_id=scope.organization_id
+        search, pagination, current_user, organization_id=organization_id
     )

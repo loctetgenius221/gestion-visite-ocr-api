@@ -6,7 +6,16 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, Response, status
 
-from app.core.deps import AdminScope, AdminUser, CurrentUser, Scope, VisitServiceDep
+from app.core.deps import (
+    ORGANIZATION_FILTER_DESCRIPTION,
+    AdminScope,
+    AdminUser,
+    CurrentUser,
+    OrganizationFilter,
+    Scope,
+    VisitServiceDep,
+)
+from app.core.routing import StrictQueryParamsRoute
 from app.models.enums import CheckoutOrigin, VisitStatus
 from app.schemas.common import Page, PaginationParams
 from app.schemas.visit import (
@@ -20,10 +29,13 @@ from app.schemas.visit import (
 )
 from app.services.export_service import ExportFormat, export_filename
 
-router = APIRouter(prefix="/visits", tags=["Visites"])
+router = APIRouter(prefix="/visits", tags=["Visites"], route_class=StrictQueryParamsRoute)
 
 
 def get_visit_filters(
+    organization_id: uuid.UUID | None = Query(
+        default=None, description=ORGANIZATION_FILTER_DESCRIPTION
+    ),
     statut: VisitStatus | None = Query(default=None),
     checkout_origin: CheckoutOrigin | None = Query(default=None),
     date_from: datetime | None = Query(default=None, description="Borne basse, `checked_in_at`."),
@@ -41,6 +53,7 @@ def get_visit_filters(
     ),
 ) -> VisitFilters:
     return VisitFilters(
+        organization_id=organization_id,
         statut=statut,
         checkout_origin=checkout_origin,
         date_from=date_from,
@@ -99,7 +112,9 @@ async def list_visits(
     filters: Annotated[VisitFilters, Depends(get_visit_filters)],
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
 ) -> Page[VisitRead]:
-    filters = filters.model_copy(update={"organization_id": scope.organization_id})
+    filters = filters.model_copy(
+        update={"organization_id": scope.resolve(filters.organization_id)}
+    )
     return await service.list_visits(filters, pagination)
 
 
@@ -140,7 +155,9 @@ async def export_visits(
     `visits_export_max_rows` (paramètres système), l'export est refusé plutôt que
     tronqué en silence.
     """
-    filters = filters.model_copy(update={"organization_id": scope.organization_id})
+    filters = filters.model_copy(
+        update={"organization_id": scope.resolve(filters.organization_id)}
+    )
     contenu, media_type = await service.export_visits(filters, export_format, scope.user)
     nom = export_filename(export_format, datetime.now(UTC))
     return Response(
@@ -157,7 +174,7 @@ async def export_visits(
 )
 async def list_auto_closed_visits(
     service: VisitServiceDep,
-    scope: Scope,
+    organization_id: OrganizationFilter,
     pagination: Annotated[PaginationParams, Depends(get_pagination)],
     day: date | None = Query(
         default=None, alias="date", description="Jour de clôture automatique."
@@ -166,11 +183,11 @@ async def list_auto_closed_visits(
     date_from = datetime.combine(day, time.min, tzinfo=UTC) if day else None
     date_to = date_from + timedelta(days=1) - timedelta(microseconds=1) if date_from else None
     filters = VisitFilters(
+        organization_id=organization_id,
         checkout_origin=CheckoutOrigin.AUTOMATIC,
         date_from=date_from,
         date_to=date_to,
     )
-    filters = filters.model_copy(update={"organization_id": scope.organization_id})
     return await service.list_visits(filters, pagination)
 
 

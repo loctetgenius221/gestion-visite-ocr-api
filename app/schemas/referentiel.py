@@ -42,6 +42,9 @@ class AgentRead(ArchivableRead):
     role: str | None = None
     office: str | None = None
     service_id: uuid.UUID
+    organization_id: uuid.UUID = Field(
+        description="Organisation de rattachement, héritée du service de l'agent."
+    )
 
 
 class PurposeRead(ArchivableRead):

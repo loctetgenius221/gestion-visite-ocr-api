@@ -304,6 +304,84 @@ class FileTooLargeError(BadRequestError):
     message = "Le fichier envoyé dépasse la taille maximale autorisée."
 
 
+class UnsupportedImportFileError(BadRequestError):
+    error_code = "UNSUPPORTED_IMPORT_FILE"
+    message = "Le fichier envoyé n'est pas un classeur Excel `.xlsx` lisible."
+
+
+class ImportColumnsMissingError(BadRequestError):
+    """En-têtes attendus introuvables : le fichier ne vient pas du modèle.
+
+    Distinct d'une simple erreur de validation : rien de la requête ne peut être
+    exploité, et le message doit dire ce qui manque **et** ce qui a été lu — sans
+    quoi l'administrateur ne peut pas deviner que sa feuille porte une ligne de
+    titre au-dessus des en-têtes.
+    """
+
+    error_code = "IMPORT_COLUMNS_MISSING"
+    message = "Colonnes obligatoires absentes du fichier."
+
+
+class UncomputedFormulaError(BadRequestError):
+    """Le classeur porte des formules dont aucun tableur n'a calculé le résultat.
+
+    Lues telles quelles, ces cellules paraissent **vides** : la ligne serait
+    importée amputée, ou ignorée, sans que rien ne le signale. C'est exactement le
+    genre de silence que le reste de l'API refuse, et il est ici d'autant plus
+    trompeur que le fichier s'ouvre normalement dans un tableur.
+
+    Le cas se produit quand le classeur a été produit par un script plutôt que
+    saisi : un fichier enregistré depuis Excel ou LibreOffice porte toujours le
+    cache des valeurs.
+    """
+
+    error_code = "IMPORT_UNCOMPUTED_FORMULA"
+
+    def __init__(self, cellules: list[str]) -> None:
+        super().__init__(
+            "Le fichier contient des formules dont le résultat n'a pas été "
+            "calculé : ces cellules seraient importées vides. Ouvrez le classeur "
+            "dans un tableur et enregistrez-le, ou remplacez les formules par "
+            "leurs valeurs.",
+            details={"cellules": cellules[:20], "total": len(cellules)},
+        )
+
+
+class ImportTooManyRowsError(UnprocessableError):
+    """Symétrique du plafond d'export (`EXPORT_TOO_LARGE`).
+
+    Un import s'applique en une seule transaction : il n'a pas vocation à avaler
+    un fichier de cent mille lignes. Refuser est plus honnête que traiter les
+    premières lignes en silence.
+    """
+
+    error_code = "IMPORT_TOO_MANY_ROWS"
+
+    def __init__(self, max_rows: int) -> None:
+        super().__init__(
+            "Le fichier dépasse le nombre de lignes autorisé pour un import : "
+            f"{max_rows} au maximum. Découpez-le en plusieurs fichiers.",
+            details={"max_rows": max_rows},
+        )
+
+
+class ImportPlanRejectedError(UnprocessableError):
+    """Application refusée : le plan porte encore des lignes en erreur.
+
+    Rien n'est écrit. L'appelant corrige son fichier — ou les lignes qu'il a
+    modifiées dans la grille de prévisualisation — et rejoue. Le tout-ou-rien est
+    délibéré : contrairement à la synchronisation hors-ligne, où les données
+    n'existent que sur la tablette et ne peuvent pas être renvoyées, un fichier
+    d'import se corrige et se retéléverse.
+    """
+
+    error_code = "IMPORT_PLAN_REJECTED"
+    message = (
+        "Des lignes sont en erreur : rien n'a été importé. "
+        "Corrigez-les et relancez l'import."
+    )
+
+
 class NotImplementedYetError(AppError):
     status_code = 501
     error_code = "NOT_IMPLEMENTED"

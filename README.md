@@ -340,6 +340,7 @@ chaque requête et jamais depuis la revendication `role` du JWT.
 |---|---|
 | Comptes | `GET/POST /users` · `GET/PUT /users/{id}` · `PATCH /users/{id}/status` · `POST /users/{id}/reset-password` · `POST /users/{id}/unlock` · `GET /users/{id}/sessions` · `DELETE /users/{id}/sessions/{sessionId}` |
 | Référentiels | `POST /services` · `PUT /services/{id}` · `PATCH /services/{id}/status` *(idem `agents`, `purposes`)* |
+| Import de référentiels | `GET /services/import/template` · `POST /services/import/preview` · `POST /services/import` *(idem `agents`)* |
 | Visites | `PATCH /visits/{id}` · `POST /visits/{id}/cancel` · `DELETE /visits/{id}` · `GET /visits/export?format=csv` |
 | Statistiques | `GET /dashboard/stats/timeseries` · `/by-service` · `/by-purpose` · `/peak-hours` · `/avg-duration` · `/top-agents` |
 | Audit | `GET /audit-logs` · `GET /audit-logs/actions` |
@@ -358,6 +359,19 @@ Quatre principes gouvernent ces routes :
 - **Verrouillage après échecs.** Cinq tentatives ratées bloquent un compte pour
   quinze minutes. Seuil et durée sont réglables dans `/settings`, sans
   redéploiement.
+
+> **Import en masse.** Remplir l'annuaire d'un ministère à la main, c'est plusieurs
+> centaines de formulaires. Un administrateur télécharge un modèle `.xlsx`
+> (`/services/import/template`, `/agents/import/template`), le remplit, le fait
+> prévisualiser — rien n'est écrit, chaque ligne ressort `create`, `update`,
+> `unchanged` ou `error` avec son numéro dans le classeur — puis l'applique.
+>
+> L'application est **tout ou rien** : une seule ligne fautive répond
+> `422 IMPORT_PLAN_REJECTED` et rien n'est écrit. Un import n'archive ni ne
+> supprime jamais : un service absent du fichier reste en place. Le `.xlsx` est
+> imposé parce qu'il verrouille l'encodage, le séparateur et le type des colonnes,
+> là où un CSV laisse trois façons de casser son fichier sans s'en apercevoir
+> (voir ADR-022).
 
 > `GET /visits/export?format=pdf` répond `501 EXPORT_FORMAT_UNAVAILABLE` : la
 > route et ses filtres sont en place, le rendu PDF demandera une bibliothèque

@@ -668,6 +668,14 @@
                 "api",
                 "v1",
                 "services"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
+                }
               ]
             },
             "description": "Retourne l'arborescence : les sous-services sont imbriqués dans `children`."
@@ -726,6 +734,12 @@
                 {
                   "key": "service_id",
                   "value": "{{service_id}}"
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
                 }
               ]
             }
@@ -758,6 +772,14 @@
                 "api",
                 "v1",
                 "purposes"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
+                }
               ]
             }
           }
@@ -875,6 +897,12 @@
                   "key": "date_to",
                   "value": "2026-12-31T23:59:59Z",
                   "disabled": true
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
                 }
               ]
             },
@@ -965,6 +993,12 @@
                 {
                   "key": "page_size",
                   "value": "20"
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
                 }
               ]
             },
@@ -1242,6 +1276,14 @@
                 "v1",
                 "dashboard",
                 "stats"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
+                }
               ]
             }
           }
@@ -1478,6 +1520,12 @@
                 {
                   "key": "status",
                   "value": "active"
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
                 }
               ]
             },
@@ -2242,6 +2290,12 @@
                 {
                   "key": "include_archived",
                   "value": "true"
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
                 }
               ]
             },
@@ -2423,6 +2477,432 @@
               }
             }
           ]
+        },
+        {
+          "name": "Modèle d'import — services (.xlsx)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('classeur .xlsx', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');",
+                  "});",
+                  "// Un .xlsx est une archive ZIP : les deux premiers octets sont « PK ».",
+                  "pm.test('archive valide', () => {",
+                  "  const octets = pm.response.stream;",
+                  "  pm.expect(octets[0]).to.eql(0x50);",
+                  "  pm.expect(octets[1]).to.eql(0x4b);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/import/template",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "import",
+                "template"
+              ],
+              "query": []
+            },
+            "description": "Classeur vide à remplir : une feuille « Services », une feuille « Notice ».\n\nLes colonnes sont au format texte, pour qu'un code saisi « 007 » ne devienne pas le nombre 7. La feuille de saisie ne contient aucun exemple — laissé en place, il finirait importé ; les exemples sont sur la notice.\n\nL'organisation destinataire ne figure pas dans le fichier : elle se choisit au téléversement. Un même modèle sert donc à toutes les structures.\n\n---\n\n**Enregistrer le fichier.** Postman ne devine pas toujours le nom depuis `Content-Disposition` : dans *Save Response → Save to a file*, vérifiez que le nom se termine bien par **`.xlsx`**. Un fichier enregistré en `.csv` s'ouvrira dans le tableur comme une colonne de caractères illisibles commençant par `PK` — c'est le classeur intact, mal nommé.\n\nBonne nouvelle : l'import juge sur le **contenu**. Un classeur valide au nom abîmé est accepté quand même ; seul un vrai CSV est refusé."
+          }
+        },
+        {
+          "name": "Modèle d'import — agents (.xlsx)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('classeur .xlsx', () => {",
+                  "  pm.expect(pm.response.headers.get('Content-Type')).to.include('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');",
+                  "});",
+                  "// Un .xlsx est une archive ZIP : les deux premiers octets sont « PK ».",
+                  "pm.test('archive valide', () => {",
+                  "  const octets = pm.response.stream;",
+                  "  pm.expect(octets[0]).to.eql(0x50);",
+                  "  pm.expect(octets[1]).to.eql(0x4b);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents/import/template",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "import",
+                "template"
+              ],
+              "query": []
+            },
+            "description": "Chaque ligne rattache une personne à un service **par son code** — pas par son UUID, que personne ne recopie dans un tableur.\n\nLe service doit exister au moment de l'import : commencez par le modèle des services si l'annuaire est vierge.\n\n---\n\n**Enregistrer le fichier.** Postman ne devine pas toujours le nom depuis `Content-Disposition` : dans *Save Response → Save to a file*, vérifiez que le nom se termine bien par **`.xlsx`**. Un fichier enregistré en `.csv` s'ouvrira dans le tableur comme une colonne de caractères illisibles commençant par `PK` — c'est le classeur intact, mal nommé.\n\nBonne nouvelle : l'import juge sur le **contenu**. Un classeur valide au nom abîmé est accepté quand même ; seul un vrai CSV est refusé."
+          }
+        },
+        {
+          "name": "Prévisualiser un import de services",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const plan = pm.response.json();",
+                  "pm.test('rien n\\'est écrit par une prévisualisation', () => {",
+                  "  pm.expect(plan.applique).to.eql(false);",
+                  "});",
+                  "pm.test('le plan nomme la structure visée', () => {",
+                  "  pm.expect(plan.organization_nom).to.be.a('string').and.not.empty;",
+                  "});",
+                  "console.log(`Plan : ${plan.a_creer} à créer, ${plan.a_mettre_a_jour} à modifier, `",
+                  "  + `${plan.inchangees} inchangées, ${plan.erreurs} en erreur.`);",
+                  "plan.items.filter(i => i.statut === 'error').forEach(i =>",
+                  "  console.log(`  ligne ${i.ligne} : ${i.error_code} — ${i.message}`));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "fichier",
+                  "type": "file",
+                  "src": [],
+                  "description": "Le classeur .xlsx rempli à partir du modèle."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/import/preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "import",
+                "preview"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Organisation qui reçoit l'import. Obligatoire pour l'ADMIN de plateforme (400 ORGANIZATION_REQUIRED sinon) ; ignoré pour un ORG_ADMIN."
+                },
+                {
+                  "key": "mettre_a_jour",
+                  "value": "false",
+                  "disabled": true,
+                  "description": "true pour modifier les entrées déjà présentes."
+                }
+              ]
+            },
+            "description": "Sélectionnez votre classeur rempli dans le champ `fichier` (onglet Body > form-data), puis envoyez.\n\n**Rien n'est écrit.** Chaque ligne ressort en `create`, `update`, `unchanged` ou `error`, avec son numéro de ligne d'origine pour retrouver la cellule fautive. La console Postman affiche le détail des erreurs.\n\nLes rattachements parent/enfant sont résolus sur le fichier **et** la base : une ligne peut désigner comme parent un service créé plus bas dans le même classeur. Un cycle est refusé."
+          }
+        },
+        {
+          "name": "Appliquer un import de services",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const rapport = pm.response.json();",
+                  "pm.test('import appliqué', () => pm.expect(rapport.applique).to.eql(true));",
+                  "pm.test('aucune erreur résiduelle', () => pm.expect(rapport.erreurs).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mettre_a_jour\": false,\n  \"lignes\": [\n    {\n      \"code\": \"SG\",\n      \"nom\": \"Secrétariat Général\"\n    },\n    {\n      \"code\": \"DRH\",\n      \"nom\": \"Direction des Ressources Humaines\",\n      \"etage\": \"2e étage\",\n      \"code_parent\": \"SG\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "import"
+              ],
+              "query": []
+            },
+            "description": "Reprenez ici les lignes rendues par la prévisualisation, éventuellement corrigées.\n\nL'application prend du **JSON** et non le fichier : le classeur ne peut plus changer entre ce que vous avez vu et ce que vous confirmez, et la grille du dashboard devient corrigeable ligne à ligne.\n\n**Tout ou rien** : une seule ligne en erreur répond 422 `IMPORT_PLAN_REJECTED` et rien n'est écrit. Rien n'est jamais supprimé ni archivé — un service absent du fichier reste en place.\n\nNotez que `DRH` référence `SG` défini juste au-dessus : l'ordre est indifférent, le serveur trie."
+          }
+        },
+        {
+          "name": "Prévisualiser un import d'agents",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const plan = pm.response.json();",
+                  "pm.test('rien n\\'est écrit par une prévisualisation', () => {",
+                  "  pm.expect(plan.applique).to.eql(false);",
+                  "});",
+                  "pm.test('le plan nomme la structure visée', () => {",
+                  "  pm.expect(plan.organization_nom).to.be.a('string').and.not.empty;",
+                  "});",
+                  "console.log(`Plan : ${plan.a_creer} à créer, ${plan.a_mettre_a_jour} à modifier, `",
+                  "  + `${plan.inchangees} inchangées, ${plan.erreurs} en erreur.`);",
+                  "plan.items.filter(i => i.statut === 'error').forEach(i =>",
+                  "  console.log(`  ligne ${i.ligne} : ${i.error_code} — ${i.message}`));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "fichier",
+                  "type": "file",
+                  "src": [],
+                  "description": "Le classeur .xlsx rempli à partir du modèle."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents/import/preview",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "import",
+                "preview"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Organisation qui reçoit l'import. Obligatoire pour l'ADMIN de plateforme (400 ORGANIZATION_REQUIRED sinon) ; ignoré pour un ORG_ADMIN."
+                },
+                {
+                  "key": "mettre_a_jour",
+                  "value": "false",
+                  "disabled": true,
+                  "description": "true pour modifier les entrées déjà présentes."
+                }
+              ]
+            },
+            "description": "Même principe que pour les services.\n\nUn code de service inconnu sort en `error` sur sa ligne (`SERVICE_NOT_FOUND`) : l'import d'agents ne crée jamais de service au passage, sans quoi une faute de frappe fabriquerait une direction fantôme. Un service archivé est refusé de la même façon."
+          }
+        },
+        {
+          "name": "Appliquer un import d'agents",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "const rapport = pm.response.json();",
+                  "pm.test('import appliqué', () => pm.expect(rapport.applique).to.eql(true));",
+                  "pm.test('aucune erreur résiduelle', () => pm.expect(rapport.erreurs).to.eql(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"mettre_a_jour\": false,\n  \"lignes\": [\n    {\n      \"nom\": \"Aminata DIALLO\",\n      \"code_service\": \"DRH\",\n      \"fonction\": \"Directrice des Ressources Humaines\",\n      \"bureau\": \"B201\"\n    },\n    {\n      \"nom\": \"Mamadou BA\",\n      \"code_service\": \"DRH\",\n      \"fonction\": \"Chef de bureau\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/agents/import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "agents",
+                "import"
+              ],
+              "query": []
+            },
+            "description": "Tout ou rien, comme pour les services.\n\nÀ `mettre_a_jour: false`, une personne déjà présente dans le même service ressort `unchanged` et n'est pas touchée : les corrections faites au dashboard priment sur le fichier."
+          }
+        },
+        {
+          "name": "Erreur — une ligne fautive annule tout (422)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('422 Unprocessable', () => pm.response.to.have.status(422));",
+                  "pm.test('IMPORT_PLAN_REJECTED', () => {",
+                  "  pm.expect(pm.response.json().error_code).to.eql('IMPORT_PLAN_REJECTED');",
+                  "});",
+                  "pm.test('la ligne fautive est nommée', () => {",
+                  "  const lignes = pm.response.json().details.lignes;",
+                  "  pm.expect(lignes[0].error_code).to.eql('IMPORT_PARENT_UNKNOWN');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"lignes\": [\n    {\n      \"code\": \"VALIDE\",\n      \"nom\": \"Service parfaitement valide\"\n    },\n    {\n      \"code\": \"BANCAL\",\n      \"nom\": \"Service bancal\",\n      \"code_parent\": \"FANTOME\"\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/services/import",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "services",
+                "import"
+              ],
+              "query": []
+            },
+            "description": "Le tout-ou-rien, démontré : la première ligne est irréprochable, la seconde référence un parent inexistant. **Aucune des deux** n'est écrite.\n\nC'est l'inverse de `POST /visits/sync`, qui commite item par item — et la différence est délibérée : là-bas les visites n'existent que sur la tablette et ne peuvent pas être renvoyées ; ici, un classeur se corrige et se retéléverse.\n\n`details.lignes` liste les lignes fautives avec leur motif."
+          }
         }
       ]
     },
@@ -2461,6 +2941,12 @@
                 {
                   "key": "page_size",
                   "value": "20"
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
                 }
               ]
             },
@@ -2661,6 +3147,12 @@
                 {
                   "key": "format",
                   "value": "csv"
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
                 }
               ]
             },
@@ -2963,6 +3455,187 @@
               }
             }
           ]
+        },
+        {
+          "name": "Registre d'une seule organisation",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('toutes les visites sont dans la structure demandée', () => {",
+                  "  const attendu = pm.environment.get('organization_id');",
+                  "  pm.response.json().items.forEach(v =>",
+                  "    pm.expect(v.organization_id).to.eql(attendu));",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits?organization_id={{organization_id}}&page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "description": "Renseignez `organization_id` dans l'environnement avec l'id d'une structure."
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Le registre borné à une structure, vu par l'ADMIN de plateforme.\n\nComparez le `total` avec celui de « Lister (paginé + filtres) » sans filtre : s'ils sont identiques alors que la plateforme héberge plusieurs structures, le filtre ne s'applique pas.\n\nUn compte non-ADMIN reçoit 403 `CROSS_ORGANIZATION_FORBIDDEN` s'il demande une organisation qui n'est pas la sienne — le filtre n'est pas une permission."
+          }
+        },
+        {
+          "name": "Visites clôturées automatiquement",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 OK', () => pm.response.to.have.status(200));",
+                  "pm.test('réponse enveloppée', () => {",
+                  "  pm.expect(pm.response.json()).to.have.all.keys('items', 'total', 'page', 'page_size');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits/auto-closed?page=1&page_size=20",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits",
+                "auto-closed"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "page_size",
+                  "value": "20"
+                },
+                {
+                  "key": "date",
+                  "value": "2026-09-07",
+                  "disabled": true,
+                  "description": "Jour de clôture automatique."
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "description": "Renseignez `organization_id` dans l'environnement avec l'id d'une structure.",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "Les visites que le job de clôture a fermées faute de sortie enregistrée.\n\nActivez `date` pour un jour précis, `organization_id` pour une seule structure."
+          }
+        },
+        {
+          "name": "Erreur — paramètre inconnu (400)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+                  "pm.test('VALIDATION_ERROR', () => {",
+                  "  pm.expect(pm.response.json().error_code).to.eql('VALIDATION_ERROR');",
+                  "});",
+                  "pm.test('le paramètre fautif est nommé', () => {",
+                  "  const d = pm.response.json().details[0];",
+                  "  pm.expect(d.loc).to.eql(['query', 'organisation_id']);",
+                  "  pm.expect(d.ctx.parametres_acceptes).to.include('organization_id');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "auth": {
+              "type": "bearer",
+              "bearer": [
+                {
+                  "key": "token",
+                  "value": "{{admin_access_token}}",
+                  "type": "string"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/api/v1/visits?organisation_id=42",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "visits"
+              ],
+              "query": [
+                {
+                  "key": "organisation_id",
+                  "value": "42",
+                  "description": "Faute de frappe volontaire."
+                }
+              ]
+            },
+            "description": "Un paramètre que la route ne déclare pas est **refusé**, pas ignoré.\n\nC'est le garde-fou ajouté après un incident : `?organization_id=…` était silencieusement jeté, et le registre de toute la plateforme s'affichait sous le nom d'une seule structure.\n\nLe code est 400 `VALIDATION_ERROR` — le même que `?page=0` — et non 422, que la spec §5.6 réserve aux échecs métier. `details[0].ctx.parametres_acceptes` liste ce que la route accepte : de quoi distinguer la faute de frappe du filtre pas encore implémenté."
+          }
         }
       ]
     },
@@ -2999,6 +3672,12 @@
                 {
                   "key": "date_to",
                   "value": "{{stats_date_to}}"
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
                 }
               ]
             },
@@ -3047,6 +3726,14 @@
                 "dashboard",
                 "stats",
                 "by-service"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
+                }
               ]
             },
             "description": "Chaque entrée porte son nombre et sa part du total, en pourcentage.",
@@ -3094,6 +3781,14 @@
                 "dashboard",
                 "stats",
                 "by-purpose"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
+                }
               ]
             },
             "description": "Les visites à motif libre sont regroupées sous une entrée `id: null` plutôt que d'être écartées du camembert.",
@@ -3136,6 +3831,14 @@
                 "dashboard",
                 "stats",
                 "peak-hours"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
+                }
               ]
             },
             "description": "Les 24 heures sont toujours présentes, à zéro le cas échéant. En UTC.",
@@ -3181,6 +3884,14 @@
                 "dashboard",
                 "stats",
                 "avg-duration"
+              ],
+              "query": [
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
+                }
               ]
             },
             "description": "La médiane accompagne la moyenne : une visite oubliée en « présent » puis clôturée le lendemain suffit à faire dérailler une moyenne seule.",
@@ -3233,6 +3944,12 @@
                 {
                   "key": "limit",
                   "value": "10"
+                },
+                {
+                  "key": "organization_id",
+                  "value": "{{organization_id}}",
+                  "disabled": true,
+                  "description": "Restreint la réponse à une organisation. Réservé à l'ADMIN de plateforme : tout autre compte est déjà borné à la sienne, et demander celle d'un tiers répond 403 CROSS_ORGANIZATION_FORBIDDEN."
                 }
               ]
             },

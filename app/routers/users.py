@@ -12,7 +12,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 
-from app.core.deps import AdminUser, UserAdminServiceDep
+from app.core.deps import ORGANIZATION_FILTER_DESCRIPTION, AdminUser, UserAdminServiceDep
+from app.core.routing import StrictQueryParamsRoute
 from app.models.enums import UserRole, UserStatus
 from app.schemas.common import Page, PaginationParams
 from app.schemas.user import (
@@ -26,10 +27,17 @@ from app.schemas.user import (
     UserUpdate,
 )
 
-router = APIRouter(prefix="/users", tags=["Administration — Comptes"])
+router = APIRouter(
+    prefix="/users",
+    tags=["Administration — Comptes"],
+    route_class=StrictQueryParamsRoute,
+)
 
 
 def get_user_filters(
+    organization_id: uuid.UUID | None = Query(
+        default=None, description=ORGANIZATION_FILTER_DESCRIPTION
+    ),
     role: UserRole | None = Query(default=None),
     status_filter: UserStatus | None = Query(
         default=None,
@@ -39,7 +47,13 @@ def get_user_filters(
     search: str | None = Query(default=None, max_length=100, description="Nom ou identifiant."),
     sort: str = Query(default="desc", pattern="^(asc|desc)$", description="Tri sur la création."),
 ) -> UserFilters:
-    return UserFilters(role=role, status=status_filter, search=search, sort=sort)  # type: ignore[arg-type]
+    return UserFilters(
+        organization_id=organization_id,
+        role=role,
+        status=status_filter,
+        search=search,
+        sort=sort,  # type: ignore[arg-type]
+    )
 
 
 def get_pagination(

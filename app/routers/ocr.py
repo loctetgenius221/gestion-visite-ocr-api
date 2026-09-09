@@ -5,9 +5,10 @@ from typing import Annotated
 from fastapi import APIRouter, File, UploadFile
 
 from app.core.deps import CurrentUser, MrzOcrServiceDep
+from app.core.routing import StrictQueryParamsRoute
 from app.schemas.ocr import MrzScanResponse
 
-router = APIRouter(prefix="/ocr", tags=["OCR MRZ"])
+router = APIRouter(prefix="/ocr", tags=["OCR MRZ"], route_class=StrictQueryParamsRoute)
 
 
 @router.post(

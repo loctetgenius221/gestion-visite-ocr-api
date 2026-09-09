@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query
 
 from app.core.deps import AutoClosureServiceDep, CurrentUser, Scope
+from app.core.routing import StrictQueryParamsRoute
 from app.models.enums import ForgottenDocumentStatus
 from app.schemas.common import Page, PaginationParams
 from app.schemas.forgotten_document import (
@@ -15,7 +16,11 @@ from app.schemas.forgotten_document import (
     ForgottenDocumentFilters,
 )
 
-router = APIRouter(prefix="/forgotten-document-cases", tags=["Pièces oubliées"])
+router = APIRouter(
+    prefix="/forgotten-document-cases",
+    tags=["Pièces oubliées"],
+    route_class=StrictQueryParamsRoute,
+)
 
 
 @router.get(

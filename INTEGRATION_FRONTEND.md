@@ -21,8 +21,11 @@ Base URL : `/api/v1` · Authentification : `Authorization: Bearer <access_token>
 | 8 | Clôture automatique des visites | — | ✅ | Additif, mais `checkout_origin` doit être affiché |
 | 9 | Suivi des pièces potentiellement oubliées | — | ✅ | Nouvelles routes et nouveaux statuts |
 | 10 | Branding et thème par organisation | — | ✅ | Nouvelles routes et champs |
+| 11 | `?organization_id=` sur les listes et les statistiques | — | ✅ | Non, additif |
+| 12 | Un paramètre de requête inconnu est refusé | ✅ | ✅ | **Oui**, `400` là où c'était ignoré |
+| 13 | Import en masse des services et des agents (.xlsx) | — | ✅ | Non, additif |
 
-### Les trois seuls points qui cassent quelque chose
+### Les quatre seuls points qui cassent quelque chose
 
 1. **`POST /visits` peut désormais répondre `409 VISITOR_ALREADY_PRESENT`.** Si vous
    ne traitez pas ce code, l'agent verra une erreur générique là où il devrait voir
@@ -35,6 +38,10 @@ Base URL : `/api/v1` · Authentification : `Authorization: Bearer <access_token>
    dashboard ou une tablette à jour en crée une. Un client non corrigé plantera alors
    en lisant le registre, **y compris sur des visites qu'il n'a pas créées**.
    Traitez-le avant d'ouvrir la fonctionnalité aux agents.
+4. **Un paramètre de requête non déclaré répond désormais `400 VALIDATION_ERROR`**
+   au lieu d'être ignoré. Purgez les paramètres décoratifs — anti-cache `?_=169…`,
+   `utm_*`, restes de copier-coller : ils faisaient jusqu'ici une requête valide.
+   Détail et format de la réponse en §1.2.
 
 Tout le reste est additif : le code existant continue de fonctionner à l'identique.
 Les sections 8 à 10 décrivent les fonctionnalités ajoutées pour le dashboard.
@@ -164,6 +171,88 @@ structures — une même personne peut se présenter dans plusieurs — mais on 
 retrouve que là où elle s'est effectivement présentée. Une personne dont la seule
 visite a été supprimée disparaît donc de la recherche ; son identité est
 retrouvée au scan de sa pièce, par son numéro de document.
+
+### Filtrer sur une organisation — `?organization_id=`
+
+Les routes de lecture acceptent `organization_id` en paramètre de requête. Le
+paramètre existe pour **tous** les rôles, mais un seul peut le faire varier :
+
+| Rôle | Effet de `?organization_id=X` |
+|---|---|
+| `ADMIN` | filtre sur `X` ; absent, la réponse couvre toute la plateforme |
+| tout autre rôle | accepté si `X` est le sien, `403 CROSS_ORGANIZATION_FORBIDDEN` sinon |
+
+Le dashboard peut donc envoyer le même paramètre quel que soit le rôle connecté,
+sans brancher son code sur le rôle : ce que voit un `ORG_ADMIN` ne dépend pas de
+ce qu'il demande.
+
+Routes concernées :
+
+| Domaine | Routes |
+|---|---|
+| Registre | `GET /visits`, `GET /visits/export`, `GET /visits/auto-closed` |
+| Tableau de bord | `GET /dashboard/stats` et les six `GET /dashboard/stats/*` (`timeseries`, `by-service`, `by-purpose`, `peak-hours`, `avg-duration`, `top-agents`) |
+| Comptes | `GET /users` |
+| Référentiels | `GET /services`, `GET /agents`, `GET /purposes` |
+| Visiteurs | `GET /visitors` |
+| Déjà en place | `GET /audit-logs`, `GET /forgotten-document-cases`, `GET /settings` |
+
+Deux précisions :
+
+- `GET /organizations/{id}/users` reste disponible et rend exactement le même
+  résultat que `GET /users?organization_id={id}`. Les deux sont supportées :
+  prenez celle qui correspond à votre navigation.
+- `GET /purposes?organization_id=X` rend ce que **verrait** cette structure : ses
+  motifs propres **et** les motifs communs à la plateforme. Sans le paramètre,
+  l'`ADMIN` voit tout le référentiel, motifs de toutes les structures compris.
+
+`AgentRead` expose désormais `organization_id`, hérité du service de rattachement
+de l'agent. Le champ est présent partout où un agent apparaît, y compris imbriqué
+dans `VisitRead.agent`.
+
+### ⚠️ Un paramètre de requête inconnu est maintenant refusé
+
+Jusqu'ici, un paramètre non déclaré par la route était **silencieusement ignoré**
+et la réponse restait `200`. C'est ce qui a fait passer inaperçu l'absence de
+`organization_id` : `GET /visits?organization_id=…` répondait `200` avec le
+registre entier, sans rien signaler.
+
+Toute route rejette désormais ce qu'elle ne sait pas honorer :
+
+```http
+GET /api/v1/visits?organisation_id=7e21…
+```
+
+```json
+{
+  "error_code": "VALIDATION_ERROR",
+  "message": "Les données envoyées sont invalides.",
+  "details": [
+    {
+      "type": "unexpected_query_parameter",
+      "loc": ["query", "organisation_id"],
+      "msg": "Paramètre de requête inconnu pour cette route.",
+      "input": "7e21…",
+      "ctx": { "parametres_acceptes": ["agent_id", "date_from", "…", "organization_id"] }
+    }
+  ]
+}
+```
+
+Le code est **`400 VALIDATION_ERROR`**, pas `422` : la spec §5.6 réserve le `422`
+aux échecs métier, et une query string fautive n'en est pas un. C'est déjà le
+code rendu par `?page=0` ou `?statut=inconnu` — un seul cas à traiter, pas deux.
+
+`ctx.parametres_acceptes` liste ce que la route accepte réellement : de quoi
+distinguer d'un coup d'œil la faute de frappe du filtre que le backend n'expose
+pas encore.
+
+Ce que cela implique côté client :
+
+- retirer les paramètres décoratifs — anti-cache (`?_=169…`), traçage (`utm_*`),
+  restes de copier-coller. Ils font maintenant échouer la requête.
+- un `400` sur une route qui marchait hier signale un paramètre mal orthographié,
+  pas une régression serveur : lisez `details[0].loc`.
 
 ## 1.3 Gestion des comptes utilisateurs
 
@@ -1218,7 +1307,203 @@ locale à l'organisation.
   `INACTIVE_ORGANIZATION` (structure désactivée — invitez à contacter
   l'administrateur de la plateforme).
 
-## 10. Checklist d'intégration
+## 10. Import en masse des services et des agents
+
+Deux référentiels, deux modèles `.xlsx`, et le même parcours en trois temps :
+télécharger le modèle, prévisualiser le classeur rempli, appliquer.
+
+| Étape | Route | Rôles |
+|---|---|---|
+| Modèle services | `GET /api/v1/services/import/template` | `ADMIN`, `ORG_ADMIN` |
+| Modèle agents | `GET /api/v1/agents/import/template` | `ADMIN`, `ORG_ADMIN` |
+| Prévisualiser des services | `POST /api/v1/services/import/preview` | `ADMIN`, `ORG_ADMIN` |
+| Appliquer des services | `POST /api/v1/services/import` | `ADMIN`, `ORG_ADMIN` |
+| Prévisualiser des agents | `POST /api/v1/agents/import/preview` | `ADMIN`, `ORG_ADMIN` |
+| Appliquer des agents | `POST /api/v1/agents/import` | `ADMIN`, `ORG_ADMIN` |
+
+### 10.1 Pourquoi la prévisualisation prend un fichier et l'application du JSON
+
+Ce n'est pas une asymétrie de confort. Elle vous donne deux choses :
+
+- le classeur ne peut plus changer entre ce que l'administrateur a vu et ce qu'il
+  confirme — l'application ne relit aucun fichier ;
+- la grille que vous affichez devient **corrigeable ligne à ligne**. L'utilisateur
+  ne repart pas dans Excel pour un code mal saisi : il corrige la cellule dans
+  votre tableau et renvoie les lignes.
+
+Renvoyez donc les objets `items[].donnees` de la prévisualisation, tels quels ou
+édités, dans le champ `lignes` de l'application.
+
+### 10.2 Télécharger un modèle
+
+Réponse binaire, `Content-Type` :
+`application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`, avec un
+`Content-Disposition` portant **les deux formes** du nom :
+
+```
+Content-Disposition: attachment; filename="modele-services.xlsx"; filename*=UTF-8''modele-services.xlsx
+```
+
+⚠️ **Nommez le fichier vous-même côté dashboard.** Si vous récupérez la réponse
+en `fetch` puis créez un blob, le navigateur ne lit pas `Content-Disposition` :
+c'est votre attribut `download` qui décide, et un nom sans extension — ou en
+`.csv` — produit un fichier que le tableur ouvrira comme du texte. On l'a vu :
+un modèle enregistré en `export.csv` s'affiche dans Google Sheets comme une
+colonne de caractères illisibles commençant par `PK`. Le fichier était intact ;
+seul son nom était faux.
+
+```js
+const r = await fetch('/api/v1/services/import/template', { headers: auth });
+const url = URL.createObjectURL(await r.blob());
+const a = Object.assign(document.createElement('a'), {
+  href: url, download: 'modele-services.xlsx',   // ← l'extension vient d'ici
+});
+a.click(); URL.revokeObjectURL(url);
+```
+
+**Ouvrir le classeur.** Excel et LibreOffice l'ouvrent par double-clic. Google
+Sheets ne lit pas le `.xlsx` par « Importer un CSV » : déposez-le dans Drive puis
+*Ouvrir avec → Google Sheets*, ou dans un classeur existant *Fichier → Importer →
+Importer*. Pour le renvoyer, *Fichier → Télécharger → Microsoft Excel (.xlsx)*.
+
+**Le serveur juge sur le contenu, pas sur le nom.** Un classeur valide reste
+accepté même si son extension a été abîmée en chemin ; à l'inverse, un vrai CSV
+renommé `.xlsx` est refusé. Vous n'avez donc pas à valider l'extension avant
+l'envoi — laissez le serveur répondre, son message nomme ce qu'il a reçu.
+
+Le classeur porte deux feuilles : la grille de saisie (en-têtes seuls) et une
+notice qui décrit chaque colonne, son caractère obligatoire et un exemple. Les
+exemples ne sont **pas** dans la grille — laissés là, ils finiraient importés.
+
+Colonnes attendues :
+
+| Modèle | Colonnes | Obligatoires |
+|---|---|---|
+| Services | `Code`, `Nom`, `Étage`, `Code parent` | `Code`, `Nom` |
+| Agents | `Nom`, `Code service`, `Fonction`, `Bureau` | `Nom`, `Code service` |
+
+Les en-têtes sont reconnus sans tenir compte de la casse, des accents ni des
+séparateurs, et quelques synonymes sont acceptés (`libelle` pour `Nom`, `poste`
+pour `Fonction`, `service` pour `Code service`…). Un administrateur peut donc
+réutiliser un fichier existant sans le recomposer entièrement.
+
+### 10.3 Prévisualiser
+
+`multipart/form-data`, champ `fichier`. Paramètres de requête : `organization_id`
+et `mettre_a_jour`.
+
+```json
+{
+  "applique": false,
+  "organization_id": "7e21…",
+  "organization_nom": "Ministère de l'Intérieur",
+  "mettre_a_jour": false,
+  "total": 3, "a_creer": 2, "a_mettre_a_jour": 0, "inchangees": 1, "erreurs": 0,
+  "items": [
+    { "ligne": 2, "statut": "create", "donnees": { "code": "SG", "nom": "Secrétariat Général" } },
+    { "ligne": 3, "statut": "unchanged", "donnees": { "…": "…" }, "entity_id": "a1b2…" },
+    { "ligne": 4, "statut": "error", "donnees": { "…": "…" },
+      "error_code": "IMPORT_PARENT_UNKNOWN", "message": "Le service parent « FANTOME » est introuvable…" }
+  ]
+}
+```
+
+Affichez **`organization_nom`** au-dessus du bouton de confirmation. Un import
+massif dans la mauvaise structure ne doit pas se découvrir après coup.
+
+`ligne` est le numéro dans le classeur d'origine : c'est ce qui permet à
+l'utilisateur de retrouver sa cellule. Gardez-le visible dans votre grille.
+
+Les quatre statuts : `create`, `update`, `unchanged`, `error`.
+
+### 10.4 Appliquer
+
+```json
+{ "organization_id": "7e21…", "mettre_a_jour": false,
+  "lignes": [{ "code": "SG", "nom": "Secrétariat Général" }] }
+```
+
+La réponse a **exactement la même forme** que la prévisualisation, avec
+`applique: true`. C'est délibéré : l'import étant tout ou rien, ce qui a été fait
+est ce qui avait été annoncé, et vous pouvez réutiliser le même composant
+d'affichage.
+
+⚠️ **Tout ou rien.** Une seule ligne en erreur répond `422 IMPORT_PLAN_REJECTED`
+et **rien n'est écrit** — pas même les lignes valides. Ne présentez donc jamais
+un import partiel : c'est soit tout, soit rien.
+
+C'est l'inverse de `POST /visits/sync`, qui applique item par item. La différence
+est voulue : une visite hors-ligne n'existe que sur la tablette et ne peut pas
+être renvoyée ; un classeur, lui, se corrige et se retéléverse.
+
+`details.lignes` du 422 liste les lignes fautives (50 au maximum) avec leur
+`error_code` et leur message.
+
+### 10.5 Ce qu'un import ne fait jamais
+
+- **Il ne supprime ni n'archive rien.** Un service absent du fichier reste en
+  place. Ne laissez pas croire à une synchronisation : ce n'est pas un miroir du
+  fichier, c'est un ajout.
+- **Il ne crée pas de service depuis le fichier des agents.** Un code inconnu
+  sort en `error` (`SERVICE_NOT_FOUND`) : une faute de frappe fabriquerait sinon
+  une direction fantôme. Enchaînez les deux imports dans cet ordre.
+- **Il n'efface pas une valeur avec une cellule vide.** Vide signifie « je ne
+  renseigne pas », pas « efface ». À `mettre_a_jour: false`, une entrée existante
+  n'est pas touchée du tout et ressort `unchanged`.
+
+### 10.6 Organisation visée
+
+`organization_id` suit la règle des écritures, plus stricte que celle des filtres
+de lecture (§1.2) :
+
+| Rôle | `organization_id` |
+|---|---|
+| `ADMIN` | **obligatoire** — `400 ORGANIZATION_REQUIRED` s'il est omis, `404 ORGANIZATION_NOT_FOUND` s'il est inconnu |
+| `ORG_ADMIN` | facultatif ; une autre organisation répond `403 CROSS_ORGANIZATION_FORBIDDEN` |
+
+Un service appartient toujours à une structure : sans elle, il n'apparaîtrait dans
+la liste d'aucun poste de contrôle. L'organisation n'est pas une colonne du
+fichier — un même modèle sert donc à toutes les structures.
+
+### 10.7 Hiérarchie des services
+
+`Code parent` peut désigner un service déjà en base **ou** un service créé plus
+bas dans le même fichier : l'ordre des lignes est indifférent, le serveur trie.
+
+Un cycle est refusé (`SERVICE_HIERARCHY_CYCLE`), y compris quand il se referme par
+la base — `A → B` dans le fichier alors que `B → A` existe déjà. La hiérarchie est
+reconstruite à chaque `GET /services` ; une boucle y tournerait sans fin.
+
+### 10.8 Erreurs propres à l'import
+
+| Code | HTTP | Quand |
+|---|---|---|
+| `UNSUPPORTED_IMPORT_FILE` | 400 | Pas un `.xlsx` — extension ou contenu. `.csv` et `.xls` sont refusés |
+| `IMPORT_COLUMNS_MISSING` | 400 | En-têtes obligatoires absents. `details` liste **ce qui a été lu** |
+| `IMPORT_UNCOMPUTED_FORMULA` | 400 | Formules sans résultat en cache : les cellules seraient importées vides |
+| `FILE_TOO_LARGE` | 400 | Au-delà de `MAX_UPLOAD_SIZE_MB` |
+| `ORGANIZATION_REQUIRED` | 400 | `ADMIN` sans `organization_id` |
+| `CROSS_ORGANIZATION_FORBIDDEN` | 403 | `ORG_ADMIN` visant une autre structure |
+| `ORGANIZATION_NOT_FOUND` | 404 | `organization_id` inconnu |
+| `IMPORT_TOO_MANY_ROWS` | 422 | Au-delà de `referentiel_import_max_rows` (5 000 par défaut) |
+| `IMPORT_PLAN_REJECTED` | 422 | Au moins une ligne en erreur — rien n'est écrit |
+
+Codes portés par une **ligne** (dans `items[].error_code`, jamais en HTTP) :
+`IMPORT_FIELD_REQUIRED`, `IMPORT_VALUE_TOO_LONG`, `IMPORT_DUPLICATE_IN_FILE`,
+`IMPORT_PARENT_UNKNOWN`, `SERVICE_HIERARCHY_CYCLE`, `SERVICE_NOT_FOUND`,
+`ARCHIVED_REFERENTIEL`.
+
+### 10.9 Journal d'audit
+
+Un import écrit **deux sortes de traces** : une par entité (`service.created`,
+`agent.created`, `agent.updated`…) avec `source: "import"` dans les métadonnées,
+et une de synthèse `referentiel.imported` portant les compteurs.
+
+Si votre écran d'audit propose un filtre « imports », visez `action=referentiel`.
+Sans ça, un import de quatre cents agents noie la journée sous les traces
+unitaires.
+
+## 11. Checklist d'intégration
 
 ### App mobile — par ordre de priorité
 
@@ -1240,6 +1525,12 @@ locale à l'organisation.
 
 ### Dashboard web
 
+- [ ] **Import en masse des référentiels** (§10) : télécharger le modèle,
+      déposer le classeur, afficher la grille de prévisualisation — corrigeable
+      ligne à ligne — puis confirmer. Dites que l'opération est **tout ou rien**
+      et qu'elle n'archive jamais rien : ce n'est pas une synchronisation
+- [ ] Afficher `organization_nom` du plan avant la confirmation : un import
+      massif dans la mauvaise structure ne doit pas se découvrir après coup
 - [ ] Implémenter la connexion JSON, le renouvellement du token et la déconnexion
 - [ ] Charger `/auth/me` ou `/me` au démarrage et conserver `role` +
       `organization_id`
@@ -1286,7 +1577,7 @@ locale à l'organisation.
 
 ---
 
-## 11. Récapitulatif des codes d'erreur nouveaux ou concernés
+## 12. Récapitulatif des codes d'erreur nouveaux ou concernés
 
 | Code | HTTP | Route | Quand |
 |---|---|---|---|
@@ -1319,17 +1610,26 @@ locale à l'organisation.
 | `DUPLICATE_REFERENTIEL` | 409 | `POST /services`, `POST /purposes` | Code ou libellé déjà pris **dans cette organisation** — plus sur toute la plateforme |
 | `LAST_ADMIN` | 409 | Désactivation/rétrogradation utilisateur | Dernier `ADMIN` de la plateforme, ou dernier `ORG_ADMIN` d'une organisation |
 | `SELF_MODIFICATION_FORBIDDEN` | 409 | Administration utilisateur | Opération sensible sur son propre compte |
+| `UNSUPPORTED_IMPORT_FILE` | 400 | `POST /services/import/preview`, `/agents/import/preview` | **Nouveau** : le **contenu** n'est pas un classeur `.xlsx`. Un vrai `.csv` ou `.xls` est refusé ; un `.xlsx` valide mal nommé est accepté. `message` nomme ce qui a été reçu |
+| `IMPORT_COLUMNS_MISSING` | 400 | Prévisualisation d'import | **Nouveau** : en-têtes obligatoires absents. `details.colonnes_lues` dit ce qui a été trouvé — souvent une ligne de titre au-dessus des en-têtes |
+| `IMPORT_UNCOMPUTED_FORMULA` | 400 | Prévisualisation d'import | **Nouveau** : le classeur porte des formules sans résultat en cache ; ces cellules seraient importées vides |
+| `FILE_TOO_LARGE` | 400 | Prévisualisation d'import | Classeur au-delà de 10 Mo |
+| `ORGANIZATION_REQUIRED` | 400 | Routes d'import | **Nouveau** : `ADMIN` sans `organization_id`. Affichez un sélecteur, pas un refus |
+| `ORGANIZATION_NOT_FOUND` | 404 | Routes d'import | **Nouveau** : `organization_id` inconnu. Répondait `500` auparavant sur les créations unitaires |
+| `IMPORT_TOO_MANY_ROWS` | 422 | Routes d'import | **Nouveau** : au-delà de `referentiel_import_max_rows` (5 000 par défaut). `details.max_rows` donne le plafond |
+| `IMPORT_PLAN_REJECTED` | 422 | `POST /services/import`, `/agents/import` | **Nouveau** : au moins une ligne en erreur — **rien n'est écrit**. `details.lignes` liste les fautives |
 
 
-## 12. Où trouver le reste
+## 13. Où trouver le reste
 
 - **Contrat complet et à jour** : `/docs` (Swagger) sur l'environnement de recette.
   Les nouveaux champs y sont décrits un par un.
 - **Pourquoi ces choix** : `ARCHITECTURE_DECISIONS.md`, ADR-016 (NIN alphanumérique),
   ADR-017 (réenregistrement et double présence), ADR-018 (recto/verso et conservation),
-  ADR-019 (personne rencontrée facultative).
+  ADR-019 (personne rencontrée facultative), ADR-020 (périmètre d'organisation),
+  ADR-021 (paramètre de requête inconnu refusé), ADR-022 (import en masse).
 
-### 12.1 Migration de la base
+### 13.1 Migration de la base
 
 Les migrations sont désormais disponibles jusqu'à la révision Alembic
 `e5b7c9d1a204`. La migration `d2f4a8b91c77` couvre la clôture automatique, les

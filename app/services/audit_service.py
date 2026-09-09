@@ -57,6 +57,11 @@ class AuditAction:
     AGENT_CREATED = "agent.created"
     AGENT_UPDATED = "agent.updated"
     AGENT_STATUS_CHANGED = "agent.status_changed"
+    # Synthèse d'un import en masse. Le préfixe `referentiel` la sépare des traces
+    # par entité (`service.created`, `agent.created`) que le même import produit :
+    # le dashboard peut lister « les imports » sans dérouler quatre cents lignes.
+    REFERENTIEL_IMPORTED = "referentiel.imported"
+
     PURPOSE_CREATED = "purpose.created"
     PURPOSE_UPDATED = "purpose.updated"
     PURPOSE_STATUS_CHANGED = "purpose.status_changed"

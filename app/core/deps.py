@@ -4,7 +4,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Annotated
 
-from fastapi import Depends, Request
+from fastapi import Depends, Query, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +26,7 @@ from app.services.dashboard_service import DashboardService
 from app.services.mrz_ocr_service import MrzOcrService
 from app.services.organization_service import OrganizationService
 from app.services.referentiel_admin_service import ReferentielAdminService
+from app.services.referentiel_import_service import ReferentielImportService
 from app.services.setting_service import SettingService
 from app.services.storage_service import StorageService, get_storage_service
 from app.services.user_admin_service import UserAdminService
@@ -76,6 +77,10 @@ def get_referentiel_admin_service(session: SessionDep) -> ReferentielAdminServic
     return ReferentielAdminService(session)
 
 
+def get_referentiel_import_service(session: SessionDep) -> ReferentielImportService:
+    return ReferentielImportService(session)
+
+
 def get_setting_service(session: SessionDep) -> SettingService:
     return SettingService(session)
 
@@ -95,6 +100,9 @@ MrzOcrServiceDep = Annotated[MrzOcrService, Depends(get_mrz_ocr_service)]
 UserAdminServiceDep = Annotated[UserAdminService, Depends(get_user_admin_service)]
 ReferentielAdminServiceDep = Annotated[
     ReferentielAdminService, Depends(get_referentiel_admin_service)
+]
+ReferentielImportServiceDep = Annotated[
+    ReferentielImportService, Depends(get_referentiel_import_service)
 ]
 SettingServiceDep = Annotated[SettingService, Depends(get_setting_service)]
 OrganizationServiceDep = Annotated[OrganizationService, Depends(get_organization_service)]
@@ -236,3 +244,30 @@ async def get_admin_scope(admin: AdminUser, scope: Scope) -> TenantScope:
 
 
 AdminScope = Annotated[TenantScope, Depends(get_admin_scope)]
+
+
+ORGANIZATION_FILTER_DESCRIPTION = (
+    "Restreint la réponse à une organisation. Seul l'ADMIN de plateforme a de quoi "
+    "en changer : tout autre compte est déjà borné à la sienne, et demander celle "
+    "d'un tiers est refusé (`CROSS_ORGANIZATION`) plutôt qu'ignoré."
+)
+
+
+async def get_organization_filter(
+    scope: Scope,
+    organization_id: Annotated[
+        uuid.UUID | None, Query(description=ORGANIZATION_FILTER_DESCRIPTION)
+    ] = None,
+) -> uuid.UUID | None:
+    """Organisation à filtrer sur une route de lecture, `None` pour « toutes ».
+
+    Déclarer le paramètre ici plutôt que route par route lui donne partout le même
+    nom, la même description et surtout la même résolution : c'est `TenantScope`
+    qui tranche, jamais le router. Une route qui l'oublie ne filtre plus du tout,
+    ce qui se voit ; une route qui le réimplémente filtrerait de travers, ce qui
+    ne se voit pas.
+    """
+    return scope.resolve(organization_id)
+
+
+OrganizationFilter = Annotated[uuid.UUID | None, Depends(get_organization_filter)]

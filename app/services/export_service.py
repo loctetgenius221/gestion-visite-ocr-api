@@ -15,6 +15,7 @@ from typing import Literal
 
 from app.models.base import ensure_utc
 from app.models.visit import Visit
+from app.services.spreadsheet import neutraliser_formule
 
 ExportFormat = Literal["csv", "pdf"]
 
@@ -84,12 +85,16 @@ def _ligne(visit: Visit) -> dict[str, str]:
 def visits_to_csv(visits: list[Visit]) -> bytes:
     """Sérialise les visites en CSV, encodé pour Excel.
 
-    Deux précautions dictées par l'usage réel :
+    Trois précautions dictées par l'usage réel :
 
     - **BOM UTF-8** — sans lui, Excel sous Windows suppose l'encodage ANSI et
       abîme tous les accents des noms de visiteurs ;
     - **point-virgule** — séparateur attendu par Excel en configuration
-      francophone, où la virgule est le séparateur décimal.
+      francophone, où la virgule est le séparateur décimal ;
+    - **formules neutralisées** — une cellule qui commence par `=`, `+`, `-` ou
+      `@` est interprétée par le tableur qui l'ouvre. Les noms exportés ici ne
+      viennent d'aucune source de confiance : scan MRZ, saisie au poste
+      d'accueil, ou import de référentiel.
     """
     tampon = io.StringIO(newline="")
     writer = csv.DictWriter(
@@ -104,7 +109,15 @@ def visits_to_csv(visits: list[Visit]) -> bytes:
     tampon.write("\ufeff")
     writer.writerow({cle: libelle for cle, libelle in _COLONNES})
     for visit in visits:
-        writer.writerow(_ligne(visit))
+        # `neutraliser_formule` sur chaque cellule : un nom de visiteur ou d'agent
+        # commençant par `=`, `+`, `-` ou `@` deviendrait une formule à l'ouverture
+        # du fichier. Ces noms viennent du scan MRZ, de la saisie d'un agent
+        # d'accueil ou d'un import de référentiel — jamais d'une source de
+        # confiance — et ce fichier-ci est justement celui qu'un administrateur
+        # ouvre dans son tableur.
+        writer.writerow(
+            {cle: neutraliser_formule(valeur) for cle, valeur in _ligne(visit).items()}
+        )
     return tampon.getvalue().encode("utf-8")
 
 

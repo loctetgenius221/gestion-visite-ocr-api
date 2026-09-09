@@ -63,6 +63,17 @@ class SystemSettingsRead(BaseModel):
         le=500_000,
         description="Garde-fou : nombre de lignes au-delà duquel un export est refusé.",
     )
+    referentiel_import_max_rows: int = Field(
+        default=5_000,
+        ge=10,
+        le=50_000,
+        description=(
+            "Garde-fou symétrique, à l'import des référentiels : nombre de lignes "
+            "au-delà duquel un classeur est refusé. Plus bas que le plafond "
+            "d'export, parce qu'un import s'applique en une seule transaction — "
+            "il écrit, là où l'export ne fait que lire."
+        ),
+    )
 
     document_images_retention_days: int = Field(
         default=365,
@@ -126,6 +137,7 @@ class SystemSettingsUpdate(BaseModel):
     max_failed_login_attempts: int | None = Field(default=None, ge=3, le=20)
     account_lockout_minutes: int | None = Field(default=None, ge=1, le=1440)
     visits_export_max_rows: int | None = Field(default=None, ge=100, le=500_000)
+    referentiel_import_max_rows: int | None = Field(default=None, ge=10, le=50_000)
     document_images_retention_days: int | None = Field(default=None, ge=0, le=3650)
     automatic_visit_closure_enabled: bool | None = None
     automatic_visit_closure_time: str | None = Field(

@@ -21,6 +21,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 
 from app.core.deps import AdminScope, OrganizationServiceDep, SuperAdminUser, UserAdminServiceDep
+from app.core.routing import StrictQueryParamsRoute
 from app.models.enums import UserRole, UserStatus
 from app.schemas.common import Page, PaginationParams
 from app.schemas.organization import (
@@ -36,11 +37,19 @@ from app.schemas.organization import (
 )
 from app.schemas.user import UserAdminRead, UserCredentialsResponse, UserFilters
 
-router = APIRouter(prefix="/organizations", tags=["Organisations & Structures"])
+router = APIRouter(
+    prefix="/organizations",
+    tags=["Organisations & Structures"],
+    route_class=StrictQueryParamsRoute,
+)
 
 # Route publique : la page de connexion doit porter les couleurs de la structure
 # avant que quiconque ait pu s'identifier.
-public_router = APIRouter(prefix="/organizations", tags=["Organisations & Structures"])
+public_router = APIRouter(
+    prefix="/organizations",
+    tags=["Organisations & Structures"],
+    route_class=StrictQueryParamsRoute,
+)
 
 
 def get_organization_filters(

@@ -5,10 +5,11 @@ from typing import Annotated, Literal
 from fastapi import APIRouter, File, Query, UploadFile, status
 
 from app.core.deps import CurrentUser, StorageDep
+from app.core.routing import StrictQueryParamsRoute
 from app.schemas.upload import UploadResponse
 from app.services.storage_service import validate_image_upload
 
-router = APIRouter(prefix="/uploads", tags=["Fichiers"])
+router = APIRouter(prefix="/uploads", tags=["Fichiers"], route_class=StrictQueryParamsRoute)
 
 DocumentFace = Literal["recto", "verso"]
 

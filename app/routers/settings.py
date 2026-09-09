@@ -22,10 +22,15 @@ from fastapi import APIRouter, Path, Query
 
 from app.core.deps import AdminScope, ClientContextDep, SessionDep, SettingServiceDep
 from app.core.errors import InsufficientRoleError
+from app.core.routing import StrictQueryParamsRoute
 from app.schemas.setting import SystemSettingsRead, SystemSettingsUpdate
 from app.services.audit_service import AuditAction, AuditService
 
-router = APIRouter(prefix="/settings", tags=["Administration — Paramètres"])
+router = APIRouter(
+    prefix="/settings",
+    tags=["Administration — Paramètres"],
+    route_class=StrictQueryParamsRoute,
+)
 
 
 @router.get("", response_model=SystemSettingsRead, summary="Paramètres effectifs")

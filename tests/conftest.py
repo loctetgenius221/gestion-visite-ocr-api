@@ -30,10 +30,12 @@ from app.core.database import get_session  # noqa: E402
 from app.core.security import hash_password  # noqa: E402
 from app.main import create_app  # noqa: E402
 from app.models import Base  # noqa: E402
-from app.models.enums import UserRole  # noqa: E402
+from app.models.enums import DocumentType, UserRole  # noqa: E402
 from app.models.organization import Organization  # noqa: E402
 from app.models.referentiel import Agent, Purpose, Service  # noqa: E402
 from app.models.user import User  # noqa: E402
+from app.models.visit import Visit  # noqa: E402
+from app.models.visitor import Visitor  # noqa: E402
 
 TEST_PASSWORD = "MotDePasse123!"
 
@@ -134,6 +136,72 @@ async def other_organization(session: AsyncSession) -> Organization:
     session.add(organization)
     await session.commit()
     return organization
+
+
+@pytest.fixture
+async def voisine(
+    session: AsyncSession, other_organization: Organization, seeded: dict
+) -> dict[str, object]:
+    """Seconde structure complète : un agent, un service, une personne, une visite.
+
+    Elle n'a **aucun** lien avec l'organisation du jeu de test. Deux familles de
+    tests s'appuient dessus : le cloisonnement, où tout ce qui remonte de cette
+    structure est par construction une fuite, et le filtre `organization_id`, où
+    elle est la seconde valeur qui permet de vérifier qu'un filtre filtre vraiment.
+    """
+    agent_compte = User(
+        nom="Agent du Port",
+        identifiant="agent-pad",
+        mot_de_passe_hash=hash_password(TEST_PASSWORD),
+        role=UserRole.AGENT_CONTROLE,
+        organization_id=other_organization.id,
+        is_active=True,
+    )
+    service = Service(
+        name="Capitainerie", code="CAP", organization_id=other_organization.id
+    )
+    motif = Purpose(libelle="Escale navire", organization_id=other_organization.id)
+    session.add_all([agent_compte, service, motif])
+    await session.flush()
+
+    agent = Agent(name="Ousmane Sarr", role="Capitaine", service_id=service.id)
+    visiteur = Visitor(
+        prenom="Khady",
+        nom="Ndoye",
+        type_document=DocumentType.CNI,
+        numero_document="PAD0000001",
+    )
+    session.add_all([agent, visiteur])
+    await session.flush()
+
+    visite = Visit(
+        organization_id=other_organization.id,
+        visitor_id=visiteur.id,
+        service_id=service.id,
+        agent_id=agent.id,
+        checked_in_by=agent_compte.id,
+    )
+    session.add(visite)
+    await session.commit()
+
+    return {
+        "organization": other_organization,
+        "user": agent_compte,
+        "service": service,
+        "agent": agent,
+        "purpose": motif,
+        "visitor": visiteur,
+        "visit": visite,
+    }
+
+
+@pytest.fixture
+async def voisine_headers(client: AsyncClient, voisine: dict) -> dict[str, str]:
+    reponse = await client.post(
+        "/auth/login", json={"identifiant": "agent-pad", "mot_de_passe": TEST_PASSWORD}
+    )
+    assert reponse.status_code == 200, reponse.text
+    return {"Authorization": f"Bearer {reponse.json()['access_token']}"}
 
 
 @pytest.fixture

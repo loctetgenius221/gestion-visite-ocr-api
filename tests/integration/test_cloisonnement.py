@@ -18,82 +18,16 @@ comptes et ses données, et la vérification qu'aucune ne voit l'autre.
 
 from __future__ import annotations
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import hash_password
 from app.models.enums import UserRole
-from app.models.organization import Organization
-from app.models.referentiel import Agent, Purpose, Service
 from app.models.user import User
-from app.models.visit import Visit
-from app.models.visitor import Visitor
 from tests.conftest import TEST_PASSWORD
 
-
-@pytest.fixture
-async def voisine(
-    session: AsyncSession, other_organization: Organization, seeded: dict
-) -> dict[str, object]:
-    """Seconde structure complète : un agent, un service, une personne, une visite.
-
-    Elle n'a **aucun** lien avec l'organisation du jeu de test : tout ce que les
-    tests ci-dessous y trouvent est, par construction, une fuite.
-    """
-    agent_compte = User(
-        nom="Agent du Port",
-        identifiant="agent-pad",
-        mot_de_passe_hash=hash_password(TEST_PASSWORD),
-        role=UserRole.AGENT_CONTROLE,
-        organization_id=other_organization.id,
-        is_active=True,
-    )
-    service = Service(
-        name="Capitainerie", code="CAP", organization_id=other_organization.id
-    )
-    motif = Purpose(libelle="Escale navire", organization_id=other_organization.id)
-    session.add_all([agent_compte, service, motif])
-    await session.flush()
-
-    agent = Agent(name="Ousmane Sarr", role="Capitaine", service_id=service.id)
-    visiteur = Visitor(
-        prenom="Khady",
-        nom="Ndoye",
-        type_document="CNI",
-        numero_document="PAD0000001",
-    )
-    session.add_all([agent, visiteur])
-    await session.flush()
-
-    visite = Visit(
-        organization_id=other_organization.id,
-        visitor_id=visiteur.id,
-        service_id=service.id,
-        agent_id=agent.id,
-        checked_in_by=agent_compte.id,
-    )
-    session.add(visite)
-    await session.commit()
-
-    return {
-        "organization": other_organization,
-        "user": agent_compte,
-        "service": service,
-        "agent": agent,
-        "purpose": motif,
-        "visitor": visiteur,
-        "visit": visite,
-    }
-
-
-@pytest.fixture
-async def voisine_headers(client: AsyncClient, voisine: dict) -> dict[str, str]:
-    reponse = await client.post(
-        "/auth/login", json={"identifiant": "agent-pad", "mot_de_passe": TEST_PASSWORD}
-    )
-    assert reponse.status_code == 200, reponse.text
-    return {"Authorization": f"Bearer {reponse.json()['access_token']}"}
+# Les fixtures `voisine` / `voisine_headers` — seconde structure complète — vivent
+# dans `tests/conftest.py` : elles servent aussi aux tests du filtre d'organisation.
 
 
 class TestRechercheDeVisiteurs:

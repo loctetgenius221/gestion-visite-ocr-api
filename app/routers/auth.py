@@ -7,6 +7,7 @@ from fastapi.security import OAuth2PasswordRequestForm
 
 from app.core.deps import AuthServiceDep, CurrentUser
 from app.core.logging import get_logger
+from app.core.routing import StrictQueryParamsRoute
 from app.schemas.auth import (
     AccessTokenResponse,
     ForgotPasswordRequest,
@@ -20,7 +21,7 @@ from app.schemas.auth import (
 
 logger = get_logger(__name__)
 
-router = APIRouter(prefix="/auth", tags=["Authentification"])
+router = APIRouter(prefix="/auth", tags=["Authentification"], route_class=StrictQueryParamsRoute)
 
 
 @router.post("/login", response_model=TokenPair, summary="Connexion d'un agent de contrôle")
@@ -91,7 +92,7 @@ async def read_me_under_auth(current_user: CurrentUser) -> UserRead:
 
 # La spec §5.1 expose `/me` à la racine de l'API : router séparé pour éviter le
 # préfixe `/auth`, tout en gardant l'alias ci-dessus par commodité.
-me_router = APIRouter(tags=["Authentification"])
+me_router = APIRouter(tags=["Authentification"], route_class=StrictQueryParamsRoute)
 
 
 @me_router.get("/me", response_model=UserRead, summary="Profil de l'utilisateur authentifié")
