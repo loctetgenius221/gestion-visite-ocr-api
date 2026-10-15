@@ -294,6 +294,22 @@ class MrzParsingError(UnprocessableError):
     message = "La zone MRZ détectée n'a pas pu être interprétée."
 
 
+class ServerOcrDisabledError(AppError):
+    """Lecture MRZ serveur désactivée par l'administrateur de plateforme.
+
+    Un 503 et non un 403 : l'appelant a le droit de scanner, c'est le service qui
+    est volontairement à l'arrêt. Le client se rabat sur la lecture mobile ou sur
+    la saisie manuelle.
+    """
+
+    status_code = 503
+    error_code = "SERVER_OCR_DISABLED"
+    message = (
+        "La lecture MRZ côté serveur est désactivée : utilisez le scan de "
+        "l'application ou la saisie manuelle."
+    )
+
+
 class UnsupportedImageError(BadRequestError):
     error_code = "UNSUPPORTED_IMAGE"
     message = "Format d'image non supporté. Formats acceptés : jpg, jpeg, png, heic."

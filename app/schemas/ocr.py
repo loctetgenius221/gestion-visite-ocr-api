@@ -33,6 +33,15 @@ class ChecksumDetails(BaseModel):
     composite: bool
 
 
+class ServerOcrStatus(BaseModel):
+    enabled: bool = Field(
+        description=(
+            "`true` si `POST /ocr/scan` est disponible. Le client s'en sert pour "
+            "proposer, ou non, le scan serveur quand la lecture mobile échoue."
+        )
+    )
+
+
 class MrzScanResponse(BaseModel):
     document_type: DocumentType
     mrz_format: MrzFormat

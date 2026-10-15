@@ -324,7 +324,7 @@ Toutes les routes sont préfixées par `/api/v1` et exigent un bearer token, sau
 |---|---|
 | Santé | `GET /health` · `GET /health/ready` *(hors préfixe `/api/v1`, sans authentification)* |
 | Auth | `POST /auth/login` · `POST /auth/token` · `POST /auth/refresh` · `POST /auth/logout` · `POST /auth/forgot-password` · `GET /me` |
-| OCR | `POST /ocr/scan` |
+| OCR (secours, désactivé par défaut) | `POST /ocr/scan` · `GET /ocr/status` |
 | Fichiers | `POST /uploads/signature` |
 | Visites | `POST /visits` · `GET /visits` · `GET /visits/{id}` · `PUT /visits/{id}/checkout` · `POST /visits/sync` |
 | Référentiels | `GET /services` · `GET /services/{id}/agents` · `GET /agents` · `GET /purposes` |
@@ -379,6 +379,12 @@ Quatre principes gouvernent ces routes :
 > Excel en configuration francophone).
 
 ### Scan MRZ
+
+> **Lecture serveur de secours.** Le scan se fait sur le mobile (Google ML Kit).
+> `POST /ocr/scan` répond `503 SERVER_OCR_DISABLED` tant que l'`ADMIN` de
+> plateforme n'a pas activé `server_ocr_enabled` (`PUT /settings`). Le modèle
+> PaddleOCR n'est pas chargé tant que le réglage est inactif. `GET /ocr/status`,
+> ouvert à tout compte, indique à l'app si le secours est disponible.
 
 `POST /ocr/scan` attend un `multipart/form-data` avec un **unique** champ fichier
 `mrz_image` : la face du document portant le MRZ (verso de CNI, page d'identité du

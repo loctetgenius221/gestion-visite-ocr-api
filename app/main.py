@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import anyio
 from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -12,7 +11,7 @@ from sqlalchemy import text
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from app.core.config import settings
-from app.core.database import dispose_engine, engine
+from app.core.database import SessionLocal, dispose_engine, engine
 from app.core.handlers import register_exception_handlers
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import RequestContextMiddleware
@@ -34,7 +33,8 @@ from app.routers import (
     settings as settings_router,
 )
 from app.schemas.common import ErrorResponse
-from app.services.ocr_engine import get_ocr_engine
+from app.services.ocr_engine import warm_up_ocr_engine
+from app.services.setting_service import SettingService
 
 logger = get_logger(__name__)
 
@@ -43,24 +43,39 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Démarrage/arrêt de l'application.
 
-    Le modèle PaddleOCR est chargé ici, une fois pour toutes : le charger à la
-    première requête ferait exploser le budget de 3 s de la spec §4.3.
+    Le modèle PaddleOCR n'est chargé que si l'OCR serveur de secours est activé
+    (`server_ocr_enabled`) : le scan se fait sur le mobile, et chaque worker
+    économise ainsi ~1,2 Go. Activé, il est chargé ici plutôt qu'au premier scan,
+    qui paierait sinon plusieurs dizaines de secondes d'initialisation.
     """
     configure_logging()
     logger.info("Démarrage de l'API", extra={"environment": settings.ENVIRONMENT})
 
     if settings.OCR_PRELOAD_MODEL:
-        try:
-            await anyio.to_thread.run_sync(get_ocr_engine().load)
-        except Exception:
-            # Un modèle indisponible ne doit pas empêcher l'API de démarrer : seules
-            # les routes OCR en pâtiront, et elles renverront une erreur explicite.
-            logger.exception("Préchargement du modèle OCR impossible")
+        if await _server_ocr_enabled():
+            await warm_up_ocr_engine()
+        else:
+            logger.info("OCR serveur désactivé : modèle PaddleOCR non chargé.")
 
     yield
 
     await dispose_engine()
     logger.info("Arrêt de l'API")
+
+
+async def _server_ocr_enabled() -> bool:
+    """Lit le réglage en base au démarrage.
+
+    Une base injoignable à cet instant ne bloque pas le démarrage : le modèle
+    n'est simplement pas préchargé, et se chargera au premier scan si le réglage
+    est actif.
+    """
+    try:
+        async with SessionLocal() as session:
+            return (await SettingService(session).get_settings()).server_ocr_enabled
+    except Exception:
+        logger.exception("Lecture du réglage d'OCR serveur impossible au démarrage")
+        return False
 
 
 def create_app() -> FastAPI:

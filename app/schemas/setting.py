@@ -7,7 +7,8 @@ réduit donc à ajouter un champ ici — aucune migration.
 Deux portées, séparées par `CLES_ORGANISATION` :
 
 - **plateforme** — sécurité et conservation légale (verrouillage des comptes,
-  rétention des images, garde-fou d'export). Réservées à l'administrateur global :
+  rétention des images, garde-fou d'export), et OCR serveur de secours, dont
+  le coût mémoire pèse sur toute l'infrastructure. Réservées à l'administrateur global :
   ce sont des règles que toutes les structures subissent ensemble ;
 - **organisation** — exploitation du poste d'accueil (heure de clôture, seuil de
   visite longue). Chaque structure y règle son propre fonctionnement, sans
@@ -87,6 +88,17 @@ class SystemSettingsRead(BaseModel):
         ),
     )
 
+    server_ocr_enabled: bool = Field(
+        default=False,
+        description=(
+            "Lecture MRZ de secours côté serveur (PaddleOCR, `POST /ocr/scan`). "
+            "Désactivée par défaut : le scan se fait sur le mobile avec ML Kit. "
+            "À activer si la lecture mobile cesse de fonctionner. Chaque worker "
+            "charge alors ~1,2 Go de modèle, au démarrage ou à son premier scan ; "
+            "désactiver refuse les scans, la mémoire n'est rendue qu'au redémarrage."
+        ),
+    )
+
     automatic_visit_closure_enabled: bool = Field(
         default=True,
         description=(
@@ -139,6 +151,7 @@ class SystemSettingsUpdate(BaseModel):
     visits_export_max_rows: int | None = Field(default=None, ge=100, le=500_000)
     referentiel_import_max_rows: int | None = Field(default=None, ge=10, le=50_000)
     document_images_retention_days: int | None = Field(default=None, ge=0, le=3650)
+    server_ocr_enabled: bool | None = None
     automatic_visit_closure_enabled: bool | None = None
     automatic_visit_closure_time: str | None = Field(
         default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$"

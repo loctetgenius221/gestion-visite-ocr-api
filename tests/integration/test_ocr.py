@@ -1,8 +1,11 @@
-"""Tests de `POST /ocr/scan`.
+"""Tests de `POST /ocr/scan` et de son interrupteur `server_ocr_enabled`.
 
 Le moteur PaddleOCR est remplacé par un double qui renvoie des lignes MRZ fixes :
 on valide ici le contrat HTTP et l'intégration preprocessing → parsing, sans
 dépendre du modèle OCR ni d'une photo réelle de document.
+
+L'OCR serveur est désactivé par défaut (le scan se fait sur le mobile) : les
+tests du pipeline l'activent d'abord via la fixture `ocr_active`.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_session
 from app.core.deps import get_mrz_ocr_service
 from app.main import create_app
+from app.repositories.setting_repository import SettingRepository
 from app.services.mrz_ocr_service import MrzOcrService
 from tests.unit.test_mrz_parser import (
     CNI_SEN_LINES,
@@ -77,6 +81,14 @@ def ocr_client_factory(engine, session: AsyncSession):
     return build
 
 
+@pytest.fixture
+async def ocr_active(session: AsyncSession) -> None:
+    """Active l'OCR serveur, comme l'aurait fait l'administrateur de plateforme."""
+    await SettingRepository(session).upsert("server_ocr_enabled", True)
+    await session.commit()
+
+
+@pytest.mark.usefixtures("ocr_active")
 class TestScanMrz:
     async def test_scan_td3_retourne_le_schema_de_la_spec(
         self, ocr_client_factory, seeded: dict, auth_headers: dict
@@ -207,3 +219,93 @@ class TestScanMrz:
             )
 
         assert response.status_code == 401
+
+
+class TestOcrServeurDeSecours:
+    async def test_desactive_par_defaut_le_scan_renvoie_503(
+        self, ocr_client_factory, seeded: dict, auth_headers: dict
+    ):
+        client, fake_engine = ocr_client_factory(TD3_LINES)
+        async with client:
+            response = await client.post(
+                "/ocr/scan",
+                files={"mrz_image": ("cni.jpg", fake_document_image(), "image/jpeg")},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 503
+        assert response.json()["error_code"] == "SERVER_OCR_DISABLED"
+        # Le moteur n'est jamais sollicité : aucun modèle à charger.
+        assert fake_engine.calls == 0
+
+    async def test_anonyme_recoit_401_meme_desactive(self, ocr_client_factory, seeded: dict):
+        client, _ = ocr_client_factory(TD3_LINES)
+        async with client:
+            response = await client.post(
+                "/ocr/scan",
+                files={"mrz_image": ("cni.jpg", fake_document_image(), "image/jpeg")},
+            )
+
+        assert response.status_code == 401
+
+    async def test_statut_lisible_par_un_agent(
+        self, client: AsyncClient, auth_headers: dict, admin_headers: dict
+    ):
+        avant = await client.get("/ocr/status", headers=auth_headers)
+        assert avant.status_code == 200
+        assert avant.json() == {"enabled": False}
+
+        await client.put("/settings", headers=admin_headers, json={"server_ocr_enabled": True})
+
+        apres = await client.get("/ocr/status", headers=auth_headers)
+        assert apres.json() == {"enabled": True}
+
+    async def test_l_admin_de_plateforme_active_puis_desactive(
+        self, ocr_client_factory, client: AsyncClient, auth_headers: dict, admin_headers: dict
+    ):
+        activation = await client.put(
+            "/settings", headers=admin_headers, json={"server_ocr_enabled": True}
+        )
+        assert activation.status_code == 200
+        assert activation.json()["server_ocr_enabled"] is True
+
+        ocr_client, _ = ocr_client_factory(TD3_LINES)
+        async with ocr_client:
+            scan = await ocr_client.post(
+                "/ocr/scan",
+                files={"mrz_image": ("cni.jpg", fake_document_image(), "image/jpeg")},
+                headers=auth_headers,
+            )
+        assert scan.status_code == 200
+
+        await client.put("/settings", headers=admin_headers, json={"server_ocr_enabled": False})
+        ocr_client, _ = ocr_client_factory(TD3_LINES)
+        async with ocr_client:
+            scan = await ocr_client.post(
+                "/ocr/scan",
+                files={"mrz_image": ("cni.jpg", fake_document_image(), "image/jpeg")},
+                headers=auth_headers,
+            )
+        assert scan.status_code == 503
+
+    async def test_l_activation_est_tracee_au_journal_d_audit(
+        self, client: AsyncClient, admin_headers: dict
+    ):
+        await client.put("/settings", headers=admin_headers, json={"server_ocr_enabled": True})
+
+        journal = await client.get(
+            "/audit-logs", headers=admin_headers, params={"action": "settings.updated"}
+        )
+        assert journal.status_code == 200
+        changements = journal.json()["items"][0]["metadata"]["changements"]
+        assert changements["server_ocr_enabled"] == {"avant": False, "après": True}
+
+    async def test_un_admin_d_organisation_ne_peut_pas_l_activer(
+        self, client: AsyncClient, org_admin_headers: dict
+    ):
+        response = await client.put(
+            "/settings", headers=org_admin_headers, json={"server_ocr_enabled": True}
+        )
+
+        assert response.status_code == 403
+        assert "server_ocr_enabled" in response.json()["details"]["parametres_refuses"]

@@ -1,8 +1,9 @@
 """Paramètres système.
 
-Ne sont exposés ici que des réglages **métier** (seuils, délais). Tout ce qui
-touche à l'infrastructure ou aux secrets reste dans les variables
-d'environnement : une valeur modifiable par une route HTTP n'est pas un secret.
+Ne sont exposés ici que des réglages **métier** (seuils, délais), et l'interrupteur
+de l'OCR serveur de secours. Tout ce qui touche à l'infrastructure ou aux secrets
+reste dans les variables d'environnement : une valeur modifiable par une route HTTP
+n'est pas un secret.
 
 Deux portées, selon le rôle de l'appelant :
 
@@ -18,13 +19,15 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Path, Query
+from fastapi import APIRouter, BackgroundTasks, Path, Query
 
+from app.core.config import settings as app_settings
 from app.core.deps import AdminScope, ClientContextDep, SessionDep, SettingServiceDep
 from app.core.errors import InsufficientRoleError
 from app.core.routing import StrictQueryParamsRoute
 from app.schemas.setting import SystemSettingsRead, SystemSettingsUpdate
 from app.services.audit_service import AuditAction, AuditService
+from app.services.ocr_engine import warm_up_ocr_engine
 
 router = APIRouter(
     prefix="/settings",
@@ -62,6 +65,7 @@ async def update_settings(
     session: SessionDep,
     context: ClientContextDep,
     scope: AdminScope,
+    background_tasks: BackgroundTasks,
     organization_id: Annotated[
         uuid.UUID | None,
         Query(description="Organisation à régler. Réservé à l'administrateur de plateforme."),
@@ -90,6 +94,15 @@ async def update_settings(
             context=context,
         )
         await session.commit()
+
+    if (
+        "server_ocr_enabled" in changements
+        and settings_effectifs.server_ocr_enabled
+        and app_settings.OCR_PRELOAD_MODEL
+    ):
+        # Seul le worker qui reçoit la requête précharge ici ; les autres le
+        # feront à leur premier scan, ou au prochain redémarrage du service.
+        background_tasks.add_task(warm_up_ocr_engine)
 
     return settings_effectifs
 

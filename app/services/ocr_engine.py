@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Protocol
 
+import anyio
 import cv2
 import numpy as np
 
@@ -124,3 +125,16 @@ def get_ocr_engine() -> PaddleOcrEngine:
     if _engine is None:
         _engine = PaddleOcrEngine()
     return _engine
+
+
+async def warm_up_ocr_engine() -> None:
+    """Charge le modèle dans un thread, sans bloquer l'event loop.
+
+    Un modèle indisponible ne doit ni empêcher l'API de démarrer ni faire échouer
+    l'activation de l'OCR serveur : seules les routes OCR en pâtiront, et elles
+    renverront une erreur explicite.
+    """
+    try:
+        await anyio.to_thread.run_sync(get_ocr_engine().load)
+    except Exception:
+        logger.exception("Préchargement du modèle OCR impossible")
