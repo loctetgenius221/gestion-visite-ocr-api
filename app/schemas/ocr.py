@@ -5,6 +5,7 @@ from datetime import date
 from pydantic import BaseModel, Field
 
 from app.models.enums import DocumentType, MrzFormat, Sexe
+from app.schemas.common import SignedStorageUrl
 
 
 class MrzFields(BaseModel):
@@ -50,7 +51,7 @@ class MrzScanResponse(BaseModel):
     checksum_details: ChecksumDetails
     raw_mrz_lines: list[str]
     # Chemin de l'image conservée pour audit (non renvoyé si le stockage est désactivé).
-    mrz_image_url: str | None = None
+    mrz_image_url: SignedStorageUrl = None
     processing_time_ms: int | None = Field(
         default=None, description="Durée du pipeline OCR côté serveur, en millisecondes."
     )

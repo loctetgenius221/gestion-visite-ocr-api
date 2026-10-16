@@ -13,6 +13,7 @@ SAFE_PRODUCTION = {
     "JWT_SECRET_KEY": "k" * 64,
     "CORS_ORIGINS": "https://app.exemple.sn",
     "DATABASE_URL": "postgresql+asyncpg://sigv:motdepasse@db:5432/sigv",
+    "STORAGE_URL_SIGNING_KEY": "s" * 48,
 }
 
 
@@ -34,6 +35,9 @@ def test_production_accepte_une_configuration_saine() -> None:
         ({"CORS_ORIGINS": "https://app.exemple.sn,*"}, "CORS_ORIGINS"),
         ({"DATABASE_URL": "sqlite+aiosqlite:///./sigv.db"}, "PostgreSQL"),
         ({"DB_ECHO": True}, "DB_ECHO"),
+        ({"STORAGE_URL_SIGNING_KEY": ""}, "STORAGE_URL_SIGNING_KEY"),
+        ({"STORAGE_URL_SIGNING_KEY": "courte"}, "STORAGE_URL_SIGNING_KEY"),
+        ({"JWT_SECRET_KEY_PREVIOUS": "courte"}, "JWT_SECRET_KEY_PREVIOUS"),
     ],
 )
 def test_production_refuse_les_reglages_de_developpement(

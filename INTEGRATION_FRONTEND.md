@@ -1,4 +1,7 @@
-# Guide d'intégration front — évolutions de septembre 2026
+# Guide d'intégration front — évolutions de septembre et octobre 2026
+
+> **Octobre 2026** : URLs de fichiers signées, refus des références d'une autre
+> organisation, sessions, OCR serveur de secours. Voir le §14.
 
 Destiné aux équipes **app mobile (Flutter)** et **dashboard web**.
 
@@ -1653,3 +1656,86 @@ l'heure locale sans conversion explicite.
 
 Une question sur un contrat, un cas de terrain qui ne rentre pas dans ce qui est
 décrit ici : remontez-le, c'est le bon moment.
+
+
+---
+
+## 14. Évolutions d'octobre 2026 — durcissement SaaS
+
+Ces changements accompagnent l'ouverture de la plateforme à plusieurs ministères.
+Aucun champ ne disparaît ; trois comportements changent. Décisions détaillées :
+ADR-023 et ADR-024.
+
+### 14.1 URLs de fichiers signées — mobile et dashboard
+
+En production, `signature_url`, `document_recto_url`, `document_verso_url`,
+`mrz_image_url` et l'`url` renvoyée par `/uploads` portent une signature valable
+**une heure** :
+
+```
+/storage/uploads/org/<organisation>/signatures/2026/10/8f2c….png?md5=Xy3…&expires=1760630400
+```
+
+- **Affichez l'URL telle quelle** (préfixée de `baseUrl`), sans retirer ni
+  recomposer la requête : sans elle, le serveur répond `403`.
+- **Renvoyez-la telle quelle** dans `POST /visits` : l'API retire elle-même la
+  signature et l'hôte éventuel avant d'enregistrer.
+- **`410 Gone` sur une image** : l'URL a expiré. Relisez la visite (ou la fiche)
+  pour en obtenir une fraîche, puis réaffichez. Ne mettez pas ces URLs en cache
+  au-delà de l'heure.
+- Les **logos d'organisation** restent publics, sans signature.
+
+Une URL qui ne désigne pas un fichier du stockage (lien externe, chemin
+arbitraire) est refusée en `400 VALIDATION_ERROR`.
+
+### 14.2 Références d'une autre organisation — mobile et dashboard
+
+`POST /visits`, `POST /visits/sync` et `PATCH /visits/{id}` refusent désormais
+toute référence qui n'appartient pas à l'organisation de la visite :
+
+| Cas | Réponse |
+|---|---|
+| `service_id` ou `purpose_id` d'une autre organisation (un motif **commun** reste accepté) | `403 CROSS_ORGANIZATION_FORBIDDEN` |
+| Fichier déposé par une autre organisation | `403 CROSS_ORGANIZATION_FORBIDDEN` |
+| `visitor_id` d'une personne jamais venue dans l'organisation | `404 VISITOR_NOT_FOUND` |
+
+Dans `POST /visits/sync`, ces cas sortent en `status: "error"` sur la ligne
+concernée ; le reste du lot est enregistré. En pratique, ils ne surviennent
+qu'avec un cache de référentiels resté sur une autre organisation (compte changé
+sur la tablette) : videz le cache à la connexion d'un autre compte.
+
+**Comportements assouplis**, sans action requise :
+- `VISITOR_ALREADY_PRESENT` ne se déclenche plus que pour une visite ouverte
+  **dans la même organisation** : une personne présente dans un autre ministère
+  peut entrer chez vous.
+- `client_reference` n'a plus besoin d'être unique que **dans votre organisation**.
+
+### 14.3 Sessions — mobile
+
+- Un refresh token n'est accepté que si sa session est active. **Une seule
+  reconnexion** peut être demandée après la mise à jour, aux comptes dont la
+  session précède le suivi des sessions.
+- Sur un `401` de `POST /auth/refresh`, renvoyez vers l'écran de connexion : la
+  session a été coupée (tablette révoquée, compte désactivé, mot de passe
+  réinitialisé).
+- Enregistrez toujours le `refresh_token` renvoyé par `/auth/refresh` quand il
+  n'est pas `null`. L'ancien continue de fonctionner jusqu'à son expiration, mais
+  tombe avec la session.
+
+### 14.4 OCR serveur de secours — mobile et dashboard
+
+- `GET /ocr/status` → `{"enabled": bool}`, ouvert à tout compte connecté.
+- Si ML Kit échoue et que `enabled` vaut `true`, envoyez la photo à
+  `POST /ocr/scan` (`receiveTimeout` ≥ 60 s). Désactivé, la route répond
+  `503 SERVER_OCR_DISABLED` : proposez la saisie manuelle.
+- **Dashboard (`ADMIN` uniquement)** : une case à cocher sur le paramètre
+  `server_ocr_enabled` de `GET/PUT /settings`.
+
+### 14.5 Nouveaux codes et statuts
+
+| Code | HTTP | Où | Conduite à tenir |
+|---|---|---|---|
+| `CROSS_ORGANIZATION_FORBIDDEN` | 403 | Création, synchro, correction de visite | Rafraîchir les référentiels ; ne pas réessayer tel quel |
+| `SERVER_OCR_DISABLED` | 503 | `POST /ocr/scan` | Saisie manuelle |
+| — | 403 / 410 | Chargement d'une image | `403` : URL modifiée. `410` : relire la visite |
+| — | 429 | Toute route | Trop de requêtes : attendre et réessayer avec temporisation |

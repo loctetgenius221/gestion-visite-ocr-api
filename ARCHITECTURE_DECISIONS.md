@@ -1,8 +1,9 @@
 # Décisions d'architecture — Backend Fp-visites
 
-Ce document trace les décisions non arbitrées par `SPEC_BACKEND_FP_VISITES_OCR_MRZ.md`,
-conformément à la consigne §11 de la spec. Chaque décision indique son contexte,
-le choix retenu et ce qui la ferait reconsidérer.
+Ce document trace les décisions non arbitrées par la spécification d'origine
+([`docs/archive/SPEC_BACKEND_FP_VISITES_OCR_MRZ.md`](docs/archive/SPEC_BACKEND_FP_VISITES_OCR_MRZ.md),
+citée « spec §… » dans le code), conformément à sa consigne §11. Chaque décision
+indique son contexte, le choix retenu et ce qui la ferait reconsidérer.
 
 ---
 
@@ -1128,3 +1129,85 @@ clé étrangère et ressortait en `500` ; il répond `404`. `POST /services` et
 `visits_export_max_rows`, et volontairement plus bas : l'import écrit en une seule
 transaction, là où l'export ne fait que lire. Réglage de **plateforme**, pas
 d'organisation : c'est une limite technique, pas un paramètre de poste d'accueil.
+
+
+---
+
+## ADR-023 — Cloisonnement à l'écriture : toute référence appartient au registre
+
+**Contexte.** L'audit de mise en production SaaS (`PRODUCTION_SAAS.md`) a
+trouvé quatre trous, tous du même ordre : ADR-020 avait cloisonné la **lecture**,
+mais pas ce qu'une écriture **référence**.
+
+- `_build_visit` vérifiait qu'un service, un motif ou un agent existait, pas
+  qu'il appartenait à l'organisation de la visite. Un `service_id` d'une autre
+  structure suffisait à écrire dans son registre. La correction de visite
+  (`PATCH`) avait le même défaut.
+- `find_open_visit` cherchait sur tout le parc : une personne non sortie au
+  ministère A était refusée au ministère B, et le `409` livrait à B l'identifiant
+  et l'heure de sa visite chez A.
+- `client_reference` était unique sur tout le parc : la clé d'idempotence d'une
+  tablette pouvait bloquer la synchro d'un autre client, et le `409` révélait le
+  `visit_id` d'autrui.
+- Un refresh token remplacé lors d'un glissement (ADR-015) restait valable sans
+  être rattaché à sa session : révoquer une tablette perdue ne coupait pas un
+  ancien token, utilisable jusqu'à trente jours.
+
+**Décision.**
+
+- L'organisation d'une visite est fixée une fois (`payload.organization_id`,
+  imposé par le router, ou celle du service pour l'ADMIN) ; service, motif propre,
+  fichiers déposés et fiche reprise doivent lui appartenir, sinon
+  `403 CROSS_ORGANIZATION_FORBIDDEN`. Un motif **commun** reste utilisable par tous.
+- Reprendre une fiche par `visitor_id` exige que la personne soit déjà venue dans
+  l'organisation — la règle de la recherche qui fournit ces identifiants. Le cas
+  contraire répond `404`, comme une fiche inexistante.
+- « Déjà présent » et `client_reference` se jugent par organisation ; la contrainte
+  devient `UNIQUE (organization_id, client_reference)`.
+- Un refresh n'est accepté que si sa **session** existe et vit. Le token remplacé
+  est conservé dans `user_sessions.previous_jti` : il fonctionne encore — un client
+  qui n'a pas enregistré le nouveau n'est pas déconnecté — mais tombe avec la
+  session, et ne fait jamais glisser la session à son tour.
+- L'unicité `(type_document, numero_document)` posée par ADR-010 existe enfin en
+  base. La migration fusionne les doublons sur la fiche la plus ancienne. Une
+  collision concurrente est rejouée une fois, au lieu d'être renvoyée à l'agent.
+
+**Conséquence assumée.** Un refresh token émis avant le suivi des sessions est
+refusé : les comptes concernés se reconnectent une fois. Après trente jours de
+suivi, il n'en reste aucun en circulation.
+
+---
+
+## ADR-024 — URLs de fichiers signées et datées
+
+**Contexte.** nginx servait `/storage/uploads/` sans contrôle : les noms en UUID ne
+se devinent pas, mais une URL de photo de CNI qui fuit — journal de proxy,
+capture d'écran, appareil perdu — donnait accès au document, sans limite de durée.
+En SaaS, ce serait de plus une fuite entre clients.
+
+**Décision.** Le module `secure_link` de nginx, plutôt qu'un passage par l'API.
+
+- La base stocke le chemin nu. L'API le signe **à la sérialisation JSON**
+  (`SignedStorageUrl`) : `?md5=…&expires=…`, MD5 en base64url de
+  `échéance + chemin + clé`, la seule forme que nginx sait vérifier. Validité
+  `STORAGE_URL_TTL_SECONDS` (une heure).
+- En entrée, `StorageUrlInput` retire signature et hôte, et refuse tout chemin
+  hors du stockage. Le client renvoie donc tel quel ce qu'il a reçu.
+- Les nouveaux fichiers sont rangés sous `org/<organisation>/` : export et
+  suppression d'un client deviennent possibles, et une visite ne peut pas
+  référencer le fichier d'une autre organisation. Les fichiers antérieurs, sans
+  préfixe, restent acceptés pour ne pas faire échouer une synchro en attente.
+- Les logos d'organisation (`organizations/`) restent publics : ils s'affichent
+  avant la connexion et ne contiennent aucune donnée personnelle.
+
+**Pourquoi pas `X-Accel-Redirect` derrière le bearer token.** Il imposait aux
+clients de joindre le token à chaque requête d'image — un changement de contrat
+pour Flutter et pour le dashboard (`<img src>` n'envoie pas d'en-tête). La
+signature garde des URLs utilisables telles quelles. Elle se déploie aussi sans
+ordre imposé : l'API signe avant que nginx ne vérifie, nginx ignore une
+signature qu'il ne contrôle pas encore.
+
+**Limite.** Une URL signée reste utilisable par quiconque la détient pendant une
+heure. C'est la fenêtre d'affichage d'un écran ; la raccourcir obligerait les
+clients à relire les visites plus souvent. Le passage à S3 remplacera ce
+mécanisme par les URLs présignées du stockage objet, sans changement côté clients.

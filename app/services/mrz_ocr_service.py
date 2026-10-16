@@ -8,11 +8,13 @@ Les trois étapes vivent dans des modules distincts pour rester testables sépar
 from __future__ import annotations
 
 import time
+import uuid
 
 import anyio
 
 from app.core.errors import MrzNotDetectedError, MrzParsingError
 from app.core.logging import get_logger
+from app.core.storage_urls import dossier_organisation
 from app.schemas.ocr import MrzScanResponse
 from app.services.image_preprocessing import preprocess_candidates
 from app.services.mrz_parser import parse_mrz_lines
@@ -32,7 +34,12 @@ class MrzOcrService:
         self._storage = storage
 
     async def scan(
-        self, content: bytes, filename: str | None, *, persist_image: bool = True
+        self,
+        content: bytes,
+        filename: str | None,
+        *,
+        persist_image: bool = True,
+        organization_id: uuid.UUID | None = None,
     ) -> MrzScanResponse:
         """Traite une image de document et retourne les champs MRZ extraits.
 
@@ -53,7 +60,9 @@ class MrzOcrService:
 
         if persist_image and self._storage is not None:
             response.mrz_image_url = await self._storage.save(
-                content, folder="mrz", extension=extension
+                content,
+                folder=f"{dossier_organisation(organization_id)}/mrz",
+                extension=extension,
             )
 
         response.processing_time_ms = int((time.perf_counter() - started) * 1000)

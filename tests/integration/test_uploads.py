@@ -36,7 +36,9 @@ class TestUploadSignature:
 
         assert response.status_code == 201, response.text
         url = response.json()["url"]
-        assert url.startswith("/storage/uploads/signatures/")
+        # Rangé sous le dossier de l'organisation de l'agent (export, fin de contrat).
+        organisation = seeded["organization"].id
+        assert url.startswith(f"/storage/uploads/org/{organisation}/signatures/")
         assert url.endswith(".png")
 
     async def test_deux_depots_ne_se_recouvrent_pas(
@@ -123,8 +125,9 @@ class TestUploadDocument:
         verso = await self._deposer(client, auth_headers, "verso")
 
         assert recto.status_code == 201, recto.text
-        assert recto.json()["url"].startswith("/storage/uploads/documents/recto/")
-        assert verso.json()["url"].startswith("/storage/uploads/documents/verso/")
+        dossier = f"/storage/uploads/org/{seeded['organization'].id}/documents"
+        assert recto.json()["url"].startswith(f"{dossier}/recto/")
+        assert verso.json()["url"].startswith(f"{dossier}/verso/")
 
     async def test_face_inconnue_est_refusee(
         self, client: AsyncClient, seeded: dict, auth_headers: dict

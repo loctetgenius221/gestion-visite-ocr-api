@@ -25,6 +25,23 @@ class Settings(BaseSettings):
     # --- Base de données ---
     DATABASE_URL: str = "postgresql+asyncpg://sigv:sigv@localhost:5432/sigv"
     DB_ECHO: bool = False
+    # Connexions ouvertes par **chaque worker** : le total vaut
+    # `nœuds × WEB_CONCURRENCY × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` et doit rester
+    # sous `max_connections` de PostgreSQL (ou sous le pool de PgBouncer).
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 5
+    # Délai d'attente d'une connexion libre avant erreur, en secondes.
+    DB_POOL_TIMEOUT: int = 30
+    # Recycle les connexions plus vieilles que ce délai : un pare-feu ou un
+    # load balancer coupe tôt ou tard une connexion TCP inactive.
+    DB_POOL_RECYCLE_SECONDS: int = 1800
+    # Une requête qui dépasse ce délai est annulée par PostgreSQL, au lieu de
+    # monopoliser une connexion et un worker. `0` désactive la borne.
+    DB_STATEMENT_TIMEOUT_MS: int = 30_000
+    # `true` derrière PgBouncer en mode transaction : asyncpg ne doit alors ni
+    # préparer ni mettre en cache de requêtes, et les paramètres de session
+    # (`statement_timeout`) se règlent côté PgBouncer.
+    DB_USE_PGBOUNCER: bool = False
 
     # --- Redis / Celery ---
     # Non utilisés pour le moment : voir ARCHITECTURE_DECISIONS.md (ADR-002).
@@ -34,6 +51,11 @@ class Settings(BaseSettings):
 
     # --- Sécurité / JWT ---
     JWT_SECRET_KEY: str = "changeme-dev-secret-key"
+    # Clé précédente, acceptée **en vérification seulement** le temps d'une
+    # rotation : les jetons signés avec elle restent valides jusqu'à leur
+    # expiration, les nouveaux sont signés avec `JWT_SECRET_KEY`. À vider une
+    # fois `REFRESH_TOKEN_EXPIRE_DAYS` écoulés.
+    JWT_SECRET_KEY_PREVIOUS: str = ""
     JWT_ALGORITHM: str = "HS256"
     # Court volontairement : l'access token accompagne chaque requête, donc c'est
     # lui qui fuite en premier. Sa brièveté est invisible pour l'agent tant que le
@@ -69,6 +91,13 @@ class Settings(BaseSettings):
     # --- Stockage fichiers ---
     STORAGE_DIR: str = "storage/uploads"
     STORAGE_PUBLIC_BASE_URL: str = "/storage/uploads"
+    # Clé partagée avec nginx (`secure_link_md5`) pour signer les URLs des
+    # photos de pièces et des signatures. Vide : URLs non signées (développement).
+    # Obligatoire en production — voir DEPLOYMENT.md, « Accès aux fichiers ».
+    STORAGE_URL_SIGNING_KEY: str = ""
+    # Durée de validité d'une URL signée. Le client la reçoit à chaque lecture
+    # d'une visite : il suffit qu'elle couvre le temps d'affichage d'un écran.
+    STORAGE_URL_TTL_SECONDS: int = 3600
     MAX_UPLOAD_SIZE_MB: int = 10
     # Un logo est une image d'interface, pas une photo de pièce : le plafond des
     # uploads MRZ y serait dix fois trop large, et un fichier accepté est un
@@ -165,6 +194,17 @@ class Settings(BaseSettings):
             problems.append("DATABASE_URL doit pointer sur PostgreSQL, pas sur SQLite")
         if self.DB_ECHO:
             problems.append("DB_ECHO=true déverse le SQL — et les données — dans les logs")
+        cle_precedente = self.JWT_SECRET_KEY_PREVIOUS
+        if cle_precedente and len(cle_precedente) < MIN_JWT_SECRET_LENGTH:
+            problems.append(
+                f"JWT_SECRET_KEY_PREVIOUS doit faire au moins {MIN_JWT_SECRET_LENGTH} caractères"
+            )
+        if len(self.STORAGE_URL_SIGNING_KEY) < MIN_JWT_SECRET_LENGTH:
+            problems.append(
+                "STORAGE_URL_SIGNING_KEY est obligatoire (au moins "
+                f"{MIN_JWT_SECRET_LENGTH} caractères) : sans elle, les photos de "
+                "pièces d'identité sont accessibles à quiconque possède leur URL"
+            )
 
         if problems:
             raise ValueError(

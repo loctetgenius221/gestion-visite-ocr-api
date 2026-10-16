@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Uuid
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, Uuid
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,6 +26,14 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         # Le listing filtre presque toujours sur statut + fenêtre de dates : index composite.
         Index("ix_visits_statut_checked_in_at", "statut", "checked_in_at"),
         Index("ix_visits_org_statut_checked_in", "organization_id", "statut", "checked_in_at"),
+        # L'idempotence de la synchro hors-ligne est propre à chaque organisation :
+        # unique sur tout le parc, une référence déjà prise par un client
+        # bloquait la synchro d'un autre (ADR-023).
+        UniqueConstraint(
+            "organization_id",
+            "client_reference",
+            name="uq_visits_organization_id_client_reference",
+        ),
     )
 
     # Obligatoire : c'est la colonne sur laquelle repose tout le cloisonnement du
@@ -103,9 +111,7 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     # Clé d'idempotence fournie par le client mobile en mode hors-ligne : permet à
     # `POST /visits/sync` de rejouer un batch sans créer de doublon (voir ADR-004).
-    client_reference: Mapped[str | None] = mapped_column(
-        String(100), unique=True, nullable=True, index=True
-    )
+    client_reference: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
 
     visitor: Mapped[Visitor] = relationship("Visitor", lazy="joined")
     organization: Mapped[Organization] = relationship("Organization", lazy="joined")

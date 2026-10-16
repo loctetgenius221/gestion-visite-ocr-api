@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import bcrypt
-from jose import JWTError, jwt
+from jose import ExpiredSignatureError, JWTError, jwt
 
 from app.core.config import settings
 from app.core.errors import InvalidTokenError
@@ -91,12 +91,48 @@ def create_refresh_token(
     )
 
 
+def _decode_claims(token: str) -> dict[str, Any]:
+    """Vérifie la signature avec la clé courante, puis avec la précédente.
+
+    La clé précédente rend la rotation de `JWT_SECRET_KEY` invisible des
+    utilisateurs : les jetons déjà émis restent valides jusqu'à leur expiration,
+    au lieu de déconnecter tout le parc au moment du changement.
+    """
+    cles = [settings.JWT_SECRET_KEY]
+    if settings.JWT_SECRET_KEY_PREVIOUS:
+        cles.append(settings.JWT_SECRET_KEY_PREVIOUS)
+
+    derniere_erreur: JWTError | None = None
+    for cle in cles:
+        try:
+            return jwt.decode(token, cle, algorithms=[settings.JWT_ALGORITHM])
+        except ExpiredSignatureError as exc:
+            # Signature reconnue mais jeton expiré : essayer l'autre clé ne
+            # changerait rien.
+            raise InvalidTokenError() from exc
+        except JWTError as exc:
+            derniere_erreur = exc
+    raise InvalidTokenError() from derniere_erreur
+
+
+# Hash bcrypt d'un mot de passe aléatoire jamais attribué, calculé une fois au
+# chargement. Il sert à `burn_password_check`.
+_HASH_FACTICE = hash_password(uuid.uuid4().hex)
+
+
+def burn_password_check(password: str) -> None:
+    """Consomme le temps d'une vérification bcrypt, sans rien vérifier.
+
+    Appelée quand l'identifiant est inconnu : sans elle, la réponse arrive bien
+    plus vite que pour un mauvais mot de passe, et la durée suffit à savoir
+    quels comptes existent.
+    """
+    verify_password(password, _HASH_FACTICE)
+
+
 def decode_token(token: str, expected_type: TokenType | None = None) -> TokenPayload:
     """Décode et valide un JWT. Lève `InvalidTokenError` sur signature/expiration/type invalide."""
-    try:
-        claims = jwt.decode(token, settings.JWT_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-    except JWTError as exc:
-        raise InvalidTokenError() from exc
+    claims = _decode_claims(token)
 
     subject = claims.get("sub")
     token_type = claims.get("type")

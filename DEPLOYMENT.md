@@ -25,19 +25,25 @@ L'API n'écoute que sur la boucle locale : elle n'est joignable que par le proxy
 
 ## 1. Dimensionner la machine
 
-L'OCR est le poste dominant : **chaque worker uvicorn charge sa propre copie du
-modèle PaddleOCR**, soit environ 1,2 Go de RAM par worker.
+La lecture MRZ se fait sur le mobile (Google ML Kit). L'OCR serveur PaddleOCR
+n'est qu'un secours, **désactivé par défaut** (`server_ocr_enabled`) : tant qu'il
+l'est, un worker consomme ~150 Mo. Dimensionnez pourtant pour le jour où il
+s'active — chaque worker charge alors ~1,2 Go de modèle. Choix d'hébergement et
+architecture cible : [`PRODUCTION_SAAS.md`](PRODUCTION_SAAS.md).
 
-| Ressource | Minimum | Confortable | Pourquoi |
-|---|---|---|---|
-| vCPU | 2 | 4 | Un scan MRZ sature les cœurs pendant ~6 s |
-| RAM | 4 Go | 8 Go | 1,2 Go par worker + PostgreSQL + le système |
-| Disque | 20 Go | 40 Go | Dépendances (~3 Go) et modèles (~500 Mo), plus les photos déposées |
+| Ressource | Minimum | Pourquoi |
+|---|---|---|
+| vCPU | 2 | API async légère ; le secours OCR occupe 2 cœurs pendant un scan |
+| RAM | 4 Go | 2 workers + PostgreSQL local, et ~2,5 Go si le secours OCR s'active |
+| Disque | 40 Go + volume données | Dépendances (~3 Go, PaddleOCR compris) ; photos sur un volume séparé et extensible |
 
-Réglez `WEB_CONCURRENCY` et `OMP_NUM_THREADS` dans `.env` de sorte que
-`WEB_CONCURRENCY × OMP_NUM_THREADS ≤ nombre de vCPU`. Sur un VPS 2 vCPU / 4 Go :
-`WEB_CONCURRENCY=2` et `OMP_NUM_THREADS=1` — ou `WEB_CONCURRENCY=1` et
-`OMP_NUM_THREADS=2` si vous préférez un scan rapide à deux scans simultanés.
+`WEB_CONCURRENCY=2` suffit largement à une API async. Si le secours OCR est activé,
+gardez `WEB_CONCURRENCY × OMP_NUM_THREADS ≤ nombre de vCPU`.
+
+**Plusieurs nœuds API.** Les fichiers déposés vivent sur le disque local : deux
+nœuds doivent alors partager le même volume (NFS) tant que le stockage objet S3
+n'est pas branché (`PRODUCTION_SAAS.md`, 1.6). Les timers (§4) ne
+s'activent que sur un seul nœud, et les migrations ne se jouent qu'une fois (§7).
 
 ---
 
@@ -102,19 +108,23 @@ Complétez les valeurs marquées « À REMPLIR » dans `.env` :
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(32))"   # mot de passe PostgreSQL
 python3 -c "import secrets; print(secrets.token_urlsafe(64))"   # JWT_SECRET_KEY
+python3 -c "import secrets; print(secrets.token_urlsafe(48))"   # STORAGE_URL_SIGNING_KEY
 ```
 
-...ainsi que `TRUSTED_HOSTS` et `CORS_ORIGINS` avec vos domaines réels.
+...ainsi que `TRUSTED_HOSTS` et `CORS_ORIGINS` avec vos domaines réels
+(`CORS_ORIGINS` = l'origine du dashboard, par exemple `https://admin.votre-domaine.sn`).
 
 > `ENVIRONMENT=production` active des garde-fous : l'API **refuse de démarrer**
 > si la clé JWT est celle de l'exemple ou trop courte, si `CORS_ORIGINS` vaut
-> `*`, si la base est en SQLite ou si `DB_ECHO=true`. Un service qui ne démarre
-> pas et le dit vaut mieux qu'une API en ligne signant ses jetons avec une clé
-> publique.
+> `*`, si la base est en SQLite, si `DB_ECHO=true` ou si
+> `STORAGE_URL_SIGNING_KEY` manque. Un service qui ne démarre pas et le dit vaut
+> mieux qu'une API en ligne signant ses jetons avec une clé publique.
 
 Schéma, données initiales et préchargement des modèles OCR :
 
 ```bash
+# PostgreSQL ≥ 13 : l'extension `pg_trgm` (recherche des visiteurs) est créée par
+# la migration, ce que le propriétaire de la base a le droit de faire.
 uv run alembic upgrade head
 
 # Référentiels et comptes agents — SEED_AGENT_PASSWORD doit être renseigné,
@@ -179,8 +189,12 @@ systemctl status sigv-api
 journalctl -u sigv-api -f          # logs JSON de l'application
 ```
 
-Le service joue `alembic upgrade head` avant chaque démarrage : le schéma suit
-toujours le code déployé.
+Le service **ne migre pas** la base à son démarrage : avec plusieurs nœuds, chaque
+redémarrage la migrerait en concurrence. Les migrations sont une étape du
+déploiement, jouée une seule fois (§7).
+
+> **Plusieurs nœuds API** : les trois timers ci-dessous (clôture, purge des
+> images, purge des sessions) ne s'activent que sur **un seul** nœud.
 
 ### Clôture automatique des visites
 
@@ -250,6 +264,22 @@ défaut, `0` désactive la purge — modifiable depuis le dashboard sans redépl
 Seules les **images** partent : visites, visiteurs et journal d'audit restent
 intacts, et chaque exécution laisse une trace `visitor.documents_purged`.
 
+### Purge des sessions
+
+Chaque connexion de tablette crée une session, chaque déconnexion un token
+révoqué : sans purge, ces tables grossissent indéfiniment. Le timer quotidien
+supprime les tokens révoqués expirés et les sessions mortes depuis plus de
+30 jours (`--garder-jours`).
+
+```bash
+sudo -u sigv /home/sigv/sigv-backend/.venv/bin/python -m app.purge_sessions --dry-run
+
+cp /home/sigv/sigv-backend/deploy/systemd/sigv-purge-sessions.service /etc/systemd/system/
+cp /home/sigv/sigv-backend/deploy/systemd/sigv-purge-sessions.timer   /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now sigv-purge-sessions.timer
+```
+
 ---
 
 ## 5. Nginx
@@ -264,15 +294,48 @@ cp /home/sigv/sigv-backend/deploy/nginx/conf.d/sigv-app.inc     /etc/nginx/conf.
 rm -f /etc/nginx/sites-enabled/default
 
 mkdir -p /var/www/certbot && chown -R www-data:www-data /var/www/certbot
+```
+
+### Accès aux fichiers
+
+Les photos de pièces et les signatures ne sont servies que sur **URL signée** par
+l'API (ADR-024). nginx vérifie la signature avec la même clé que
+`STORAGE_URL_SIGNING_KEY` du `.env` — à recopier à l'identique :
+
+```bash
+nginx -V 2>&1 | grep -o with-http_secure_link_module   # module présent (paquets Debian/Ubuntu)
+
+CLE=$(grep '^STORAGE_URL_SIGNING_KEY=' /home/sigv/sigv-backend/.env | cut -d= -f2-)
+printf 'map $host $sigv_storage_key { default "%s"; }\n' "$CLE" > /etc/nginx/sigv-storage-key.conf
+chown root:www-data /etc/nginx/sigv-storage-key.conf
+chmod 640 /etc/nginx/sigv-storage-key.conf
 
 nginx -t && systemctl reload nginx
 ```
+
+Une URL sans signature répond `403`, une URL échue `410` : le client relit la
+visite pour en obtenir une fraîche. Les logos d'organisation restent publics.
+
+> Changer la clé invalide toutes les URLs en cours (une heure au plus) : modifiez
+> `.env` et `sigv-storage-key.conf` ensemble, puis redémarrez l'API et rechargez nginx.
 
 Vérification :
 
 ```bash
 curl http://localhost/health          # {"status":"ok","environment":"production"}
-curl http://localhost/health/ready    # {"status":"ok","database":"ok"} — 503 si la base est HS
+curl http://localhost/health/ready    # {"status":"ok","database":"ok","storage":"ok"} — 503 sinon
+```
+
+### Dashboard d'administration
+
+Le build de production du dashboard Vue est servi par nginx sur son propre
+domaine, avec une politique de sécurité de contenu stricte :
+
+```bash
+mkdir -p /var/www/fp-visites-admin        # y déposer le contenu de `dist/`
+cp /home/sigv/sigv-backend/deploy/nginx/conf.d/30-admin.conf.example /etc/nginx/conf.d/30-admin.conf
+# remplacer admin.exemple.sn et api.exemple.sn, émettre le certificat (§6), puis :
+nginx -t && systemctl reload nginx
 ```
 
 > Si `/storage/uploads/...` renvoie 403, c'est que www-data ne peut pas traverser
@@ -332,18 +395,28 @@ sudo -u postgres psql sigv           # console SQL
 
 ### Mise à jour
 
+On déploie un **tag** validé par la CI (`.github/workflows/ci.yml`), jamais une
+branche : chaque nœud doit tourner exactement le même code.
+
 ```bash
-sudo -iu sigv
-cd ~/sigv-backend
-git pull
-uv sync --frozen --no-dev
-exit
-systemctl restart sigv-api           # migrations jouées par ExecStartPre
+# Nœud unique, ou premier nœud : migre la base puis redémarre
+sudo bash /home/sigv/sigv-backend/deploy/scripts/deploy.sh v1.4.0 --migrate
+
+# Nœuds suivants : même tag, sans migration
+sudo bash /home/sigv/sigv-backend/deploy/scripts/deploy.sh v1.4.0
 ```
 
-L'indisponibilité dure le temps du redémarrage plus le préchargement du modèle
-OCR, soit une trentaine de secondes. Pour l'éviter, il faudrait deux instances
-sur des ports distincts derrière nginx, mises à jour l'une après l'autre.
+Le script récupère le tag, synchronise les dépendances, migre si demandé,
+redémarre l'API et attend que `/health/ready` réponde ; il échoue en affichant
+les derniers journaux sinon. **Faites une sauvegarde de la base avant toute
+migration.**
+
+Avec deux nœuds derrière un load balancer, la mise à jour se fait sans coupure :
+le nœud qui redémarre sort de la rotation le temps de répondre à nouveau. Cela
+impose une règle d'écriture des migrations : rester compatible avec la version
+précédente du code, qui tourne encore sur l'autre nœud — **ajouter avant de
+retirer** (une colonne retirée l'est dans une version ultérieure, une fois plus
+aucun code ne la lisant).
 
 ### Sauvegardes
 
@@ -374,22 +447,21 @@ Automatisation minimale, dans le `crontab -e` de root :
 
 ## 8. Points de vigilance
 
-### Durcir l'accès aux fichiers
-
-Nginx sert `/storage/uploads/` **sans authentification**. Les noms de fichiers
-sont des UUID v4 non devinables et le listing est désactivé, mais quiconque
-obtient une URL accède à l'image du document d'identité.
-
-Pour un accès authentifié, l'option la plus simple est `X-Accel-Redirect` :
-ajouter à l'API une route protégée par le bearer token qui renvoie l'en-tête
-`X-Accel-Redirect: /_fichiers/<chemin>`, et passer la location nginx en
-`internal`. L'app Flutter devra alors joindre le token à ses requêtes d'image :
-c'est un changement de contrat côté client, à planifier.
-
 ### Rotation de la clé JWT
 
-Changer `JWT_SECRET_KEY` invalide instantanément tous les jetons émis : tous les
-agents devront se reconnecter. À faire hors des heures d'ouverture du poste.
+Sans coupure : placez l'ancienne clé dans `JWT_SECRET_KEY_PREVIOUS`, la nouvelle
+dans `JWT_SECRET_KEY`, et redémarrez. Les jetons déjà émis restent valides jusqu'à
+leur expiration ; videz `JWT_SECRET_KEY_PREVIOUS` après `REFRESH_TOKEN_EXPIRE_DAYS`
+jours. En cas de **fuite** de la clé, ne renseignez pas la précédente : tous les
+agents se reconnectent, c'est le but.
+
+### Base de données
+
+Le pool est réglé par `DB_POOL_SIZE` et `DB_MAX_OVERFLOW`, **par worker**. Gardez
+`nœuds × WEB_CONCURRENCY × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` sous le
+`max_connections` de PostgreSQL. Au-delà de quelques nœuds, intercalez PgBouncer
+en mode transaction et passez `DB_USE_PGBOUNCER=true`. Toute requête est annulée
+au bout de `DB_STATEMENT_TIMEOUT_MS` (30 s).
 
 ### Latence du scan
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date
 
-from sqlalchemy import Date, String
+from sqlalchemy import Date, String, UniqueConstraint
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,6 +14,15 @@ class Visitor(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """Visiteur externe identifié par sa pièce d'identité."""
 
     __tablename__ = "visitors"
+    __table_args__ = (
+        # ADR-010 : une personne = un couple (type, numéro de pièce). Sans la
+        # contrainte, deux synchronisations simultanées créaient deux fiches.
+        UniqueConstraint(
+            "type_document",
+            "numero_document",
+            name="uq_visitors_type_document_numero_document",
+        ),
+    )
 
     prenom: Mapped[str] = mapped_column(String(150), nullable=False)
     nom: Mapped[str] = mapped_column(String(150), nullable=False, index=True)

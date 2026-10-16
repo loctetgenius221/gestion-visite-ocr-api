@@ -1,10 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar
+from typing import Annotated, Any, Generic, TypeVar
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, PlainSerializer
+
+from app.core.storage_urls import normalize_storage_url, sign_storage_url
 
 T = TypeVar("T")
+
+# URL de fichier **en sortie** : stockée nue, signée à la sérialisation JSON
+# (ADR-024). `when_used="json"` : un `model_dump()` interne — journal d'audit,
+# diff — garde le chemin stable, sans signature datée.
+SignedStorageUrl = Annotated[
+    str | None, PlainSerializer(sign_storage_url, return_type=str | None, when_used="json")
+]
+
+# URL de fichier **en entrée** : ramenée au chemin stocké, signature retirée.
+StorageUrlInput = Annotated[str | None, AfterValidator(normalize_storage_url)]
 
 
 class ORMModel(BaseModel):

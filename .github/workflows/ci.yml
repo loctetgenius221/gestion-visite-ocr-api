@@ -1,0 +1,77 @@
+# Intégration continue : rien n'est déployé qui n'a pas passé ces deux jobs.
+#
+# - `tests`      : lint et suite complète (SQLite en mémoire, ADR-007) ;
+# - `migrations` : upgrade, downgrade puis upgrade sur un vrai PostgreSQL 16.
+#   La suite tourne sur SQLite ; c'est ici que se voient les écarts de dialecte
+#   (enums, contraintes, index trigrammes, fusion de données) qui ne
+#   surgiraient sinon qu'en production.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Dépendances (versions figées par uv.lock)
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check app tests
+
+      - name: Tests
+        run: uv run pytest -q -p no:cacheprovider
+
+  migrations:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sigv
+          POSTGRES_PASSWORD: sigv
+          POSTGRES_DB: sigv
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U sigv"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://sigv:sigv@localhost:5432/sigv
+      ENVIRONMENT: ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Dépendances
+        run: uv sync --frozen --no-dev
+
+      - name: Upgrade, downgrade, upgrade
+        run: |
+          uv run alembic upgrade head
+          uv run alembic downgrade base
+          uv run alembic upgrade head

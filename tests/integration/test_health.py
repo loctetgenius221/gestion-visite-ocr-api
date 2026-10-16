@@ -21,11 +21,22 @@ async def test_health_repond_sans_authentification() -> None:
     assert response.json()["status"] == "ok"
 
 
-async def test_readiness_verifie_la_base() -> None:
+async def test_readiness_verifie_la_base_et_le_stockage() -> None:
     async with await _root_client() as client:
         response = await client.get("/health/ready")
     assert response.status_code == 200
-    assert response.json() == {"status": "ok", "database": "ok"}
+    assert response.json() == {"status": "ok", "database": "ok", "storage": "ok"}
+
+
+async def test_readiness_repond_503_si_le_stockage_est_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    """Un volume de fichiers non monté ferait échouer chaque dépôt de photo."""
+    async with await _root_client() as client:
+        monkeypatch.setattr(settings, "STORAGE_DIR", str(tmp_path / "volume-non-monte"))
+        response = await client.get("/health/ready")
+
+    assert response.status_code == 503
 
 
 async def test_readiness_repond_503_si_la_base_est_injoignable(

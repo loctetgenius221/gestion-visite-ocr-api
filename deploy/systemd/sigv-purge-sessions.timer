@@ -1,0 +1,16 @@
+# Déclenchement quotidien de la purge des sessions.
+#
+#   sudo systemctl enable --now sigv-purge-sessions.timer
+#   journalctl -u sigv-purge-sessions                 # résultat des exécutions
+
+[Unit]
+Description=Fp-visites — purge quotidienne des sessions
+
+[Timer]
+# 03h30, hors des heures d'ouverture du poste d'accueil.
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

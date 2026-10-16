@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -171,8 +172,10 @@ def create_app() -> FastAPI:
     async def readiness() -> dict[str, str]:
         """Sonde de *readiness* : l'API peut-elle réellement servir du trafic ?
 
-        Répond 503 si la base est injoignable, pour qu'un load balancer sorte
-        l'instance de la rotation au lieu de lui envoyer des requêtes vouées à échouer.
+        Répond 503 si la base est injoignable ou si le stockage des fichiers
+        n'est pas accessible en écriture, pour qu'un load balancer sorte
+        l'instance de la rotation au lieu de lui envoyer des requêtes vouées à
+        échouer — un dépôt de photo, par exemple, sur un volume non monté.
         """
         try:
             async with engine.connect() as connection:
@@ -183,7 +186,18 @@ def create_app() -> FastAPI:
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Base de données injoignable.",
             ) from None
-        return {"status": "ok", "database": "ok"}
+
+        stockage = Path(settings.STORAGE_DIR)
+        if not (stockage.is_dir() and os.access(stockage, os.W_OK)):
+            logger.error(
+                "Sonde de disponibilité : stockage inaccessible",
+                extra={"storage_dir": str(stockage)},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Stockage des fichiers inaccessible.",
+            )
+        return {"status": "ok", "database": "ok", "storage": "ok"}
 
     return application
 

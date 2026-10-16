@@ -20,9 +20,9 @@ class UserSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     Seul le `jti` est stocké, jamais le token lui-même : une fuite de cette table
     ne permettrait pas de se faire passer pour l'utilisateur.
 
-    La révocation reste portée par `revoked_tokens` — `revoked_at` n'est ici qu'un
-    reflet, pour lister l'état sans jointure. Ce découplage garantit que les tokens
-    émis avant la mise en place des sessions continuent de fonctionner.
+    Un refresh token n'est accepté que si sa session existe et n'est pas
+    révoquée (ADR-023) : c'est ce qui permet de couper réellement une tablette
+    perdue. `revoked_tokens` reste alimentée, en défense en profondeur.
     """
 
     __tablename__ = "user_sessions"
@@ -31,6 +31,11 @@ class UserSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         Uuid(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     jti: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    # Token remplacé lors du dernier glissement. Il reste utilisable jusqu'à sa
+    # propre expiration — un client qui n'a pas enregistré le nouveau ne doit
+    # pas être déconnecté — mais **seulement tant que la session vit** :
+    # révoquer la session le coupe avec le token courant.
+    previous_jti: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

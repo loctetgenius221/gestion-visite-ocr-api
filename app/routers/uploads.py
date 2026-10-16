@@ -6,6 +6,7 @@ from fastapi import APIRouter, File, Query, UploadFile, status
 
 from app.core.deps import CurrentUser, StorageDep
 from app.core.routing import StrictQueryParamsRoute
+from app.core.storage_urls import dossier_organisation
 from app.schemas.upload import UploadResponse
 from app.services.storage_service import validate_image_upload
 
@@ -36,7 +37,8 @@ async def upload_signature(
     """
     content = await signature.read()
     extension = validate_image_upload(signature.filename, content)
-    url = await storage.save(content, folder="signatures", extension=extension)
+    dossier = f"{dossier_organisation(current_user.organization_id)}/signatures"
+    url = await storage.save(content, folder=dossier, extension=extension)
     return UploadResponse(url=url)
 
 
@@ -61,9 +63,11 @@ async def upload_document(
 
     Les deux faces sont rangées séparément (`documents/recto/`, `documents/verso/`) :
     la purge des images périmées et toute inspection ultérieure y gagnent, pour un
-    coût nul.
+    coût nul. Le tout sous le dossier de l'organisation (`org/<id>/`), pour
+    pouvoir exporter ou supprimer les fichiers d'un client.
     """
     content = await document.read()
     extension = validate_image_upload(document.filename, content)
-    url = await storage.save(content, folder=f"documents/{face}", extension=extension)
+    dossier = f"{dossier_organisation(current_user.organization_id)}/documents/{face}"
+    url = await storage.save(content, folder=dossier, extension=extension)
     return UploadResponse(url=url)

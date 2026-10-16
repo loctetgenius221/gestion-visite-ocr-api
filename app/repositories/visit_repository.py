@@ -206,16 +206,41 @@ class VisitRepository:
         )
         return (await self.session.execute(stmt)).unique().scalars().first()
 
-    async def get_by_client_reference(self, client_reference: str) -> Visit | None:
-        stmt = select(Visit).where(Visit.client_reference == client_reference)
-        return (await self.session.execute(stmt)).unique().scalars().first()
-
-    async def find_open_visit(self, visitor_id: uuid.UUID) -> Visit | None:
-        """Visite encore ouverte pour ce visiteur — sert à détecter les doublons d'entrée."""
+    async def get_by_client_reference(
+        self, client_reference: str, organization_id: uuid.UUID
+    ) -> Visit | None:
+        """La clé d'idempotence n'a de sens que dans l'organisation qui l'a émise."""
         stmt = select(Visit).where(
-            Visit.visitor_id == visitor_id, Visit.statut == VisitStatus.PRESENT
+            Visit.client_reference == client_reference,
+            Visit.organization_id == organization_id,
         )
         return (await self.session.execute(stmt)).unique().scalars().first()
+
+    async def find_open_visit(
+        self, visitor_id: uuid.UUID, organization_id: uuid.UUID
+    ) -> Visit | None:
+        """Visite encore ouverte pour ce visiteur **dans cette organisation**.
+
+        Une personne présente au ministère A peut se présenter au ministère B :
+        ce sont deux registres distincts. Chercher sur tout le parc l'aurait
+        refusée chez B, et aurait révélé à B l'existence et l'heure de sa visite
+        chez A.
+        """
+        stmt = select(Visit).where(
+            Visit.visitor_id == visitor_id,
+            Visit.organization_id == organization_id,
+            Visit.statut == VisitStatus.PRESENT,
+        )
+        return (await self.session.execute(stmt)).unique().scalars().first()
+
+    async def visitor_has_visited(self, visitor_id: uuid.UUID, organization_id: uuid.UUID) -> bool:
+        """La personne est-elle déjà venue dans cette organisation ?"""
+        stmt = (
+            select(Visit.id)
+            .where(Visit.visitor_id == visitor_id, Visit.organization_id == organization_id)
+            .limit(1)
+        )
+        return (await self.session.execute(stmt)).first() is not None
 
     @staticmethod
     def _apply_filters(stmt: Select, filters: VisitFilters) -> Select:

@@ -1,0 +1,61 @@
+# Dashboard d'administration (Vue.js) — fichiers statiques, sur son propre domaine.
+#
+#   sudo cp deploy/nginx/conf.d/30-admin.conf.example /etc/nginx/conf.d/30-admin.conf
+#   sudo sed -i 's/admin.exemple.sn/admin.votre-domaine.sn/g; s/api.exemple.sn/api.votre-domaine.sn/g' \
+#       /etc/nginx/conf.d/30-admin.conf
+#   sudo nginx -t && sudo systemctl reload nginx
+#
+# Le build de production (`npm run build`) est déposé dans /var/www/fp-visites-admin.
+# Côté API : CORS_ORIGINS=https://admin.votre-domaine.sn (et rien d'autre).
+#
+# Certificat : `certbot certonly --webroot -w /var/www/certbot -d admin.votre-domaine.sn`
+# — le serveur HTTP (10-http.conf) sert déjà le challenge ACME pour tout domaine.
+
+server {
+    listen 443 ssl;
+    listen [::]:443 ssl;
+    http2 on;
+    server_name admin.exemple.sn;
+
+    ssl_certificate     /etc/letsencrypt/live/admin.exemple.sn/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/admin.exemple.sn/privkey.pem;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache   shared:SIGV_TLS:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    root /var/www/fp-visites-admin;
+    index index.html;
+
+    # Le dashboard affiche des pièces d'identité : il ne doit être encadré par
+    # aucun site, ne charger de script que de sa propre origine, et ne parler
+    # qu'à l'API. `img-src` autorise l'API, qui sert les photos signées et les logos.
+    add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://api.exemple.sn; connect-src 'self' https://api.exemple.sn; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+    add_header Strict-Transport-Security "max-age=15552000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header X-Frame-Options DENY always;
+    add_header Referrer-Policy no-referrer always;
+    add_header Permissions-Policy "camera=(), microphone=(), geolocation=()" always;
+
+    # Fichiers versionnés par le build (nom contenant un hash) : cache long.
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable" always;
+        # `add_header` ne s'hérite pas : les en-têtes de sécurité sont repris.
+        add_header X-Content-Type-Options nosniff always;
+        try_files $uri =404;
+    }
+
+    # Application monopage : toute route inconnue rend `index.html`, jamais mis
+    # en cache pour qu'un déploiement soit pris en compte immédiatement.
+    location / {
+        try_files $uri $uri/ /index.html;
+        add_header Cache-Control "no-cache" always;
+        add_header Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://api.exemple.sn; connect-src 'self' https://api.exemple.sn; font-src 'self' data:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'" always;
+        add_header Strict-Transport-Security "max-age=15552000" always;
+        add_header X-Content-Type-Options nosniff always;
+        add_header X-Frame-Options DENY always;
+        add_header Referrer-Policy no-referrer always;
+    }
+}

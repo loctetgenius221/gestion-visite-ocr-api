@@ -11,7 +11,8 @@ Description=Fp-visites Backend API (FastAPI/uvicorn)
 Documentation=file:///home/sigv/sigv-backend/DEPLOYMENT.md
 After=network-online.target postgresql.service
 Wants=network-online.target
-Requires=postgresql.service
+# Pas de `Requires=postgresql.service` : en architecture multi-nœuds, la base
+# vit sur une autre machine. `/health/ready` signale une base injoignable.
 
 [Service]
 Type=exec
@@ -24,10 +25,10 @@ EnvironmentFile=/home/sigv/sigv-backend/.env
 # logs en temps réel.
 Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 
-# Le schéma suit le code déployé : migration avant chaque démarrage. Sur une
-# instance unique, c'est suffisant ; avec plusieurs instances, retirez cette ligne
-# et jouez `alembic upgrade head` une seule fois lors du déploiement.
-ExecStartPre=/home/sigv/sigv-backend/.venv/bin/alembic upgrade head
+# Pas de migration au démarrage : avec plusieurs nœuds, chaque redémarrage la
+# jouerait en concurrence, et un simple redémarrage après incident migrerait la
+# base sans que personne ne l'ait décidé. Les migrations sont une étape du
+# déploiement, jouée une seule fois : `deploy/scripts/deploy.sh`.
 
 # uvicorn lit WEB_CONCURRENCY dans l'environnement pour son nombre de workers.
 # --proxy-headers : l'IP client et le schéma https viennent de nginx.

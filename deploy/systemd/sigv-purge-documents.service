@@ -19,7 +19,8 @@
 Description=Fp-visites — purge des photos de pièces d'identité
 Documentation=file:///home/sigv/sigv-backend/DEPLOYMENT.md
 After=network-online.target postgresql.service
-Requires=postgresql.service
+# `After` et non `Requires` : la base peut vivre sur une autre machine.
+Wants=network-online.target
 
 [Service]
 Type=oneshot

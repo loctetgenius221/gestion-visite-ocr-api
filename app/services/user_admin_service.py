@@ -275,6 +275,10 @@ class UserAdminService:
 
         maintenant = datetime.now(UTC)
         await self.revoked.revoke(record.jti, user.id, record.expires_at)
+        if record.previous_jti:
+            # Le token remplacé au dernier glissement vit encore : sans cette
+            # ligne, une tablette volée qui le détient garderait l'accès.
+            await self.revoked.revoke(record.previous_jti, user.id, record.expires_at)
         await self.sessions.mark_revoked(record, maintenant)
 
         await self.audit.record(

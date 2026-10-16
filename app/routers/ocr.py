@@ -58,4 +58,6 @@ async def scan_mrz(
     if not (await settings_service.get_settings()).server_ocr_enabled:
         raise ServerOcrDisabledError()
     content = await mrz_image.read()
-    return await service.scan(content, mrz_image.filename)
+    return await service.scan(
+        content, mrz_image.filename, organization_id=current_user.organization_id
+    )

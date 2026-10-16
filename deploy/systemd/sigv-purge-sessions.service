@@ -1,0 +1,36 @@
+# Nettoyage des sessions mortes et des tokens révoqués expirés.
+#
+#   sudo cp deploy/systemd/sigv-purge-sessions.service /etc/systemd/system/
+#   sudo cp deploy/systemd/sigv-purge-sessions.timer   /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now sigv-purge-sessions.timer
+#
+# Avec plusieurs nœuds API, n'activez le timer que sur **un seul** d'entre eux.
+#
+# Adaptez les chemins si l'application n'est pas installée dans /home/sigv/sigv-backend.
+
+[Unit]
+Description=Fp-visites — purge des sessions et tokens révoqués
+Documentation=file:///home/sigv/sigv-backend/DEPLOYMENT.md
+# `After` et non `Requires` : la base peut vivre sur une autre machine.
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=sigv
+Group=sigv
+WorkingDirectory=/home/sigv/sigv-backend
+EnvironmentFile=/home/sigv/sigv-backend/.env
+Environment=PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+
+ExecStart=/home/sigv/sigv-backend/.venv/bin/python -m app.purge_sessions
+
+# --- Durcissement, aligné sur sigv-api.service ---
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true

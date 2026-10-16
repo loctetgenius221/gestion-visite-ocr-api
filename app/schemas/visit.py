@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, mo
 
 from app.models.enums import CheckoutOrigin, DocumentType, Sexe, VisitStatus
 from app.schemas.auth import UserRead
-from app.schemas.common import ORMModel
+from app.schemas.common import ORMModel, SignedStorageUrl, StorageUrlInput
 from app.schemas.referentiel import AgentRead, PurposeRead, ServiceRead
 
 
@@ -38,7 +38,7 @@ class VisitorInput(BaseModel):
     email: EmailStr | None = None
     provenance: str | None = Field(default=None, max_length=200)
     immatriculation_vehicule: str | None = Field(default=None, max_length=40)
-    document_recto_url: str | None = Field(
+    document_recto_url: StorageUrlInput = Field(
         default=None,
         max_length=500,
         description=(
@@ -46,12 +46,12 @@ class VisitorInput(BaseModel):
             "Utile en saisie manuelle : le scan MRZ ne capture que le verso."
         ),
     )
-    document_verso_url: str | None = Field(
+    document_verso_url: StorageUrlInput = Field(
         default=None,
         max_length=500,
         description="Photo du verso — la face portant le MRZ sur une CNI.",
     )
-    mrz_image_url: str | None = Field(
+    mrz_image_url: StorageUrlInput = Field(
         default=None,
         max_length=500,
         deprecated="Utilisez `document_verso_url`, qui désigne la même face.",
@@ -123,9 +123,9 @@ class VisitorRead(ORMModel):
     email: str | None = None
     provenance: str | None = None
     immatriculation_vehicule: str | None = None
-    document_recto_url: str | None = None
-    document_verso_url: str | None = None
-    mrz_image_url: str | None = None
+    document_recto_url: SignedStorageUrl = None
+    document_verso_url: SignedStorageUrl = None
+    mrz_image_url: SignedStorageUrl = None
 
 
 class VisitorSearchResult(VisitorRead):
@@ -172,7 +172,7 @@ class VisitCreate(BaseModel):
     purpose_id: uuid.UUID | None = None
     motif_libre: str | None = Field(default=None, max_length=500)
     badge_number: str | None = Field(default=None, max_length=50)
-    signature_url: str | None = Field(default=None, max_length=500)
+    signature_url: StorageUrlInput = Field(default=None, max_length=500)
     # Horodatage d'entrée : fourni par le client en mode hors-ligne, sinon `now()` serveur.
     checked_in_at: datetime | None = None
     # Clé d'idempotence pour la synchronisation batch (voir ADR-004).
@@ -212,7 +212,7 @@ class VisitRead(ORMModel):
     statut: VisitStatus
     motif_libre: str | None = None
     badge_number: str | None = None
-    signature_url: str | None = None
+    signature_url: SignedStorageUrl = None
     checked_in_at: datetime
     checked_out_at: datetime | None = None
     checkout_origin: CheckoutOrigin | None = None

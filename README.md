@@ -1,13 +1,21 @@
 # Fp-visites — Backend API
 
-API de **Fp-visites** : contrôle d'accès d'un poste d'accueil, avec extraction
-automatique de l'identité des visiteurs par lecture de la zone MRZ (ICAO 9303) de
-leur pièce d'identité.
+API de **Fp-visites**, plateforme SaaS de contrôle d'accès des postes d'accueil,
+multi-ministères et multi-organisations. L'identité des visiteurs est lue sur la
+zone MRZ (ICAO 9303) de leur pièce, par l'app mobile ; un OCR serveur de secours
+peut être activé.
 
-Spécification fonctionnelle : [`SPEC_BACKEND_FP_VISITES_OCR_MRZ.md`](SPEC_BACKEND_FP_VISITES_OCR_MRZ.md)
-Décisions techniques : [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md)
-Guide d'implémentation, de zéro à l'API : [`GUIDE_IMPLEMENTATION.md`](GUIDE_IMPLEMENTATION.md)
-Mise en production : [`DEPLOYMENT.md`](DEPLOYMENT.md)
+| Document | Pour quoi faire |
+|---|---|
+| Ce README | Démarrer en local, rôles, routes, tests |
+| [`INTEGRATION_FRONTEND.md`](INTEGRATION_FRONTEND.md) | Contrat d'API pour les équipes Flutter et Vue |
+| [`DEPLOYMENT.md`](DEPLOYMENT.md) | Installer et mettre à jour un serveur de production |
+| [`PRODUCTION_SAAS.md`](PRODUCTION_SAAS.md) | Architecture cible, ce qui reste à faire, décisions attendues |
+| [`ARCHITECTURE_DECISIONS.md`](ARCHITECTURE_DECISIONS.md) | Pourquoi chaque choix technique (ADR) |
+
+La spécification d'origine et le guide d'implémentation pas à pas sont archivés
+dans [`docs/archive/`](docs/archive/) : ils décrivent l'OCR serveur comme le
+chemin principal, ce qui n'est plus le cas.
 
 ---
 
@@ -472,17 +480,17 @@ Avec `ENVIRONMENT=production`, l'API applique trois différences notables :
 | | Développement | Production |
 |---|---|---|
 | `/docs`, `/openapi.json` | exposés | masqués (`ENABLE_DOCS=true` les rouvre) |
-| `storage/uploads` | servi par l'API | servi par Nginx (`SERVE_STORAGE`) |
-| Configuration | tolérante | démarrage refusé si clé JWT d'exemple, `CORS_ORIGINS=*`, base SQLite ou `DB_ECHO=true` |
+| `storage/uploads` | servi par l'API, URLs nues | servi par Nginx (`SERVE_STORAGE`), **URLs signées** et datées (ADR-024) |
+| Configuration | tolérante | démarrage refusé si clé JWT d'exemple, `CORS_ORIGINS=*`, base SQLite, `DB_ECHO=true` ou `STORAGE_URL_SIGNING_KEY` absente |
+
+> **URLs de fichiers.** `signature_url`, `document_recto_url`, `document_verso_url`,
+> `mrz_image_url` et l'`url` de `/uploads` portent en production une signature
+> valable une heure (`?md5=…&expires=…`). Les clients les affichent telles
+> quelles et les renvoient telles quelles : l'API retire la signature. Une URL
+> échue répond `410` : relire la visite en donne une fraîche.
 
 ---
 
 ## Reste à faire
 
-- **Conteneurisation** — écartée pour cette version, voir la dernière section de
-  [`DEPLOYMENT.md`](DEPLOYMENT.md).
-- **Envoi réel** du lien de réinitialisation de mot de passe
-  ([ADR-006](ARCHITECTURE_DECISIONS.md)).
-- **Test du pipeline OCR sur photo réelle** : le parsing MRZ est validé sur une CNI
-  réelle, mais la chaîne OpenCV + PaddleOCR n'a été exercée que sur images de
-  synthèse — reste à mesurer le taux de reconnaissance sur photos prises au téléphone.
+Voir la feuille de route de [`PRODUCTION_SAAS.md`](PRODUCTION_SAAS.md), §4.

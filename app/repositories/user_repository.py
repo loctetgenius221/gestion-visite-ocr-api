@@ -162,8 +162,11 @@ class UserSessionRepository:
         return await self.session.get(UserSession, session_id)
 
     async def get_by_jti(self, jti: str) -> UserSession | None:
-        stmt = select(UserSession).where(UserSession.jti == jti)
-        return (await self.session.execute(stmt)).scalar_one_or_none()
+        """Session portant ce token, qu'il soit le courant ou celui qu'il a remplacé."""
+        stmt = select(UserSession).where(
+            or_(UserSession.jti == jti, UserSession.previous_jti == jti)
+        )
+        return (await self.session.execute(stmt)).scalars().first()
 
     async def list_active(self, user_id: uuid.UUID, now: datetime) -> list[UserSession]:
         stmt = (
@@ -192,10 +195,11 @@ class UserSessionRepository:
         d'accueil rafraîchit son token toutes les 30 minutes — et noierait la liste
         des sessions actives du dashboard sous des doublons du même appareil.
 
-        L'ancien `jti` n'est pas révoqué : un client qui ignore le nouveau token
-        continue de fonctionner jusqu'à l'expiration de l'ancien. C'est ce qui rend
-        le glissement rétro-compatible (voir ADR-015).
+        L'ancien `jti` est conservé dans `previous_jti` : un client qui ignore le
+        nouveau token continue de fonctionner jusqu'à l'expiration de l'ancien
+        (ADR-015), mais révoquer la session coupe les deux (ADR-023).
         """
+        record.previous_jti = record.jti
         record.jti = jti
         record.expires_at = expires_at
         record.last_used_at = now
@@ -214,10 +218,34 @@ class UserSessionRepository:
     async def list_active_jtis(
         self, user_id: uuid.UUID, now: datetime
     ) -> list[tuple[str, datetime]]:
-        """`(jti, expires_at)` des sessions vivantes — pour tout révoquer d'un coup."""
-        stmt = select(UserSession.jti, UserSession.expires_at).where(
+        """`(jti, expires_at)` des sessions vivantes — pour tout révoquer d'un coup.
+
+        Le token remplacé lors d'un glissement figure aussi dans la liste : il
+        expire au plus tard avec le courant, d'où la même date.
+        """
+        stmt = select(UserSession.jti, UserSession.previous_jti, UserSession.expires_at).where(
             UserSession.user_id == user_id,
             UserSession.revoked_at.is_(None),
             UserSession.expires_at > now,
         )
-        return [(jti, expires_at) for jti, expires_at in (await self.session.execute(stmt)).all()]
+        jtis: list[tuple[str, datetime]] = []
+        for jti, precedent, expires_at in (await self.session.execute(stmt)).all():
+            jtis.append((jti, expires_at))
+            if precedent:
+                jtis.append((precedent, expires_at))
+        return jtis
+
+    async def purge(self, *, expired_before: datetime, revoked_before: datetime) -> int:
+        """Supprime les sessions mortes depuis assez longtemps pour ne plus servir.
+
+        Une session expirée ou révoquée reste quelques jours visible, le temps
+        qu'un administrateur constate qu'une tablette a bien été coupée.
+        """
+        stmt = delete(UserSession).where(
+            or_(
+                UserSession.expires_at < expired_before,
+                UserSession.revoked_at < revoked_before,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return result.rowcount or 0

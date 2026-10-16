@@ -25,6 +25,7 @@ from app.core.errors import (
     VisitorNotFoundError,
 )
 from app.core.logging import get_logger
+from app.core.storage_urls import appartient_a_une_autre_organisation
 from app.models.base import ensure_utc
 from app.models.enums import CheckoutOrigin, UserRole, VisitStatus
 from app.models.user import User
@@ -69,31 +70,44 @@ class VisitService:
         self.audit = AuditService(session)
 
     async def create_visit(self, payload: VisitCreate, current_user: User) -> Visit:
-        """Crée une visite et commit. Les référentiels sont validés avant insertion."""
-        visit = await self._build_visit(payload, current_user.id)
-        try:
-            await self.audit.record(
-                AuditAction.VISIT_CREATED,
-                entity="visit",
-                entity_id=visit.id,
-                actor=current_user,
-                metadata={
-                    "service_id": visit.service_id,
-                    "agent_id": visit.agent_id,
-                    "client_reference": visit.client_reference,
-                    # Trace la reprise d'une fiche connue : la visite a été
-                    # enregistrée **sans rescanner** la pièce d'identité.
-                    "visiteur_reutilise": payload.visitor_id is not None,
-                },
-                context=self.context,
-            )
-            await self.session.commit()
-        except IntegrityError as exc:
-            await self.session.rollback()
-            # Seule contrainte d'unicité pouvant sauter ici : `client_reference`.
-            raise DuplicateVisitError(
-                details={"client_reference": payload.client_reference}
-            ) from exc
+        """Crée une visite et commit. Les référentiels sont validés avant insertion.
+
+        Une `IntegrityError` signale une course : deux enregistrements simultanés
+        de la même personne (unicité de la pièce, ADR-010) ou de la même
+        `client_reference`. La seconde tentative relit l'état du gagnant — la
+        fiche créée entre-temps est reprise, une référence déjà enregistrée
+        répond `DUPLICATE_VISIT` — au lieu de renvoyer une erreur à l'agent.
+        """
+        for tentative in (1, 2):
+            try:
+                visit = await self._build_visit(payload, current_user.id)
+                await self.audit.record(
+                    AuditAction.VISIT_CREATED,
+                    entity="visit",
+                    entity_id=visit.id,
+                    actor=current_user,
+                    metadata={
+                        "service_id": visit.service_id,
+                        "agent_id": visit.agent_id,
+                        "client_reference": visit.client_reference,
+                        # Trace la reprise d'une fiche connue : la visite a été
+                        # enregistrée **sans rescanner** la pièce d'identité.
+                        "visiteur_reutilise": payload.visitor_id is not None,
+                    },
+                    context=self.context,
+                )
+                await self.session.commit()
+                break
+            except IntegrityError as exc:
+                await self.session.rollback()
+                if tentative == 2:
+                    raise DuplicateVisitError(
+                        details={"client_reference": payload.client_reference}
+                    ) from exc
+                # Le rollback a expiré toutes les instances de la session : la
+                # relecture doit être explicite, une lecture paresseuse étant
+                # interdite en contexte async.
+                await self.session.refresh(current_user)
 
         refreshed = await self.visits.get_by_id(visit.id)
         assert refreshed is not None
@@ -105,9 +119,32 @@ class VisitService:
         On reçoit l'`user_id` et non l'objet `User` : un rollback expire toutes les
         instances de la session, et relire un attribut expiré déclencherait une IO
         synchrone interdite ici (cas de la synchro batch, qui rollback entre items).
+
+        Toute référence doit appartenir à l'organisation de la visite : service,
+        motif, fichiers déposés, visiteur repris (ADR-023). Le router impose déjà
+        l'organisation de l'appelant ; sans ce contrôle, un identifiant de service
+        d'une autre structure suffisait à écrire dans son registre.
         """
+        service = await self.services.get_by_id(payload.service_id)
+        if service is None:
+            raise ServiceNotFoundError(details={"service_id": str(payload.service_id)})
+        organisation = payload.organization_id or service.organization_id
+        if service.organization_id != organisation:
+            raise CrossOrganizationError(
+                "Ce service appartient à une autre organisation.",
+                details={"service_id": str(service.id)},
+            )
+        # Un référentiel archivé n'est plus proposé par l'API de lecture : le
+        # recevoir ici signale un cache client périmé, pas une saisie valide.
+        if service.is_archived:
+            raise ArchivedReferentielError(
+                "Ce service est archivé.", details={"service_id": str(service.id)}
+            )
+
         if payload.client_reference:
-            existing = await self.visits.get_by_client_reference(payload.client_reference)
+            existing = await self.visits.get_by_client_reference(
+                payload.client_reference, organisation
+            )
             if existing is not None:
                 raise DuplicateVisitError(
                     details={
@@ -115,16 +152,6 @@ class VisitService:
                         "visit_id": str(existing.id),
                     }
                 )
-
-        service = await self.services.get_by_id(payload.service_id)
-        if service is None:
-            raise ServiceNotFoundError(details={"service_id": str(payload.service_id)})
-        # Un référentiel archivé n'est plus proposé par l'API de lecture : le
-        # recevoir ici signale un cache client périmé, pas une saisie valide.
-        if service.is_archived:
-            raise ArchivedReferentielError(
-                "Ce service est archivé.", details={"service_id": str(service.id)}
-            )
 
         # Facultative : un dépôt ou un retrait s'adresse au service, pas à une
         # personne (ADR-019). Fournie, elle reste contrôlée comme avant.
@@ -147,16 +174,24 @@ class VisitService:
             purpose = await self.purposes.get_by_id(payload.purpose_id)
             if purpose is None:
                 raise PurposeNotFoundError(details={"purpose_id": str(payload.purpose_id)})
+            # Un motif commun (`organization_id` nul) est proposé à toutes les
+            # structures ; un motif propre n'appartient qu'à la sienne.
+            if purpose.organization_id not in (None, organisation):
+                raise CrossOrganizationError(
+                    "Ce motif appartient à une autre organisation.",
+                    details={"purpose_id": str(purpose.id)},
+                )
             if purpose.is_archived:
                 raise ArchivedReferentielError(
                     "Ce motif est archivé.", details={"purpose_id": str(purpose.id)}
                 )
 
-        visitor = await self._resoudre_visiteur(payload)
-        await self._refuser_si_deja_present(visitor)
+        self._refuser_fichiers_etrangers(payload, organisation)
+        visitor = await self._resoudre_visiteur(payload, organisation)
+        await self._refuser_si_deja_present(visitor, organisation)
 
         visit = Visit(
-            organization_id=payload.organization_id or service.organization_id,
+            organization_id=organisation,
             visitor_id=visitor.id,
             service_id=payload.service_id,
             agent_id=payload.agent_id,
@@ -171,17 +206,40 @@ class VisitService:
         )
         return await self.visits.add(visit)
 
-    async def _resoudre_visiteur(self, payload: VisitCreate) -> Visitor:
+    @staticmethod
+    def _refuser_fichiers_etrangers(payload: VisitCreate, organisation: uuid.UUID) -> None:
+        """Refuse un fichier rangé dans le dossier d'une autre organisation.
+
+        Le chemin n'est pas renvoyé dans l'erreur : il désigne un fichier d'autrui.
+        """
+        chemins = [payload.signature_url]
+        if payload.visitor is not None:
+            chemins += [
+                payload.visitor.document_recto_url,
+                payload.visitor.document_verso_url,
+                payload.visitor.mrz_image_url,
+            ]
+        if any(c and appartient_a_une_autre_organisation(c, organisation) for c in chemins):
+            raise CrossOrganizationError(
+                "Un fichier référencé a été déposé par une autre organisation."
+            )
+
+    async def _resoudre_visiteur(self, payload: VisitCreate, organisation: uuid.UUID) -> Visitor:
         """Fiche du visiteur : reprise d'une fiche connue, ou créée/mise à jour au scan.
 
         `VisitCreate` garantit qu'une seule des deux sources est renseignée.
+
+        Une fiche ne se reprend par son identifiant que si la personne est déjà
+        venue dans l'organisation : c'est la règle de la recherche (ADR-020), qui
+        fournit ces identifiants. Le cas contraire répond comme une fiche
+        inexistante, pour ne pas confirmer qu'elle existe ailleurs.
         """
         if payload.visitor_id is None:
             assert payload.visitor is not None
             return await self._upsert_visitor(payload.visitor)
 
         visitor = await self.visitors.get_by_id(payload.visitor_id)
-        if visitor is None:
+        if visitor is None or not await self.visits.visitor_has_visited(visitor.id, organisation):
             raise VisitorNotFoundError(details={"visitor_id": str(payload.visitor_id)})
 
         if payload.visitor_passage is not None:
@@ -193,8 +251,8 @@ class VisitService:
 
         return visitor
 
-    async def _refuser_si_deja_present(self, visitor: Visitor) -> None:
-        """Une même personne ne peut pas être présente deux fois.
+    async def _refuser_si_deja_present(self, visitor: Visitor, organisation: uuid.UUID) -> None:
+        """Une même personne ne peut pas être présente deux fois **dans un même registre**.
 
         Le rescan de la pièce freinait naturellement la double saisie ; en reprenant
         une fiche connue, elle ne coûte plus que deux gestes et va se produire. Deux
@@ -204,7 +262,7 @@ class VisitService:
         Le conflit porte la visite ouverte et son heure d'entrée : le client peut
         proposer « clôturer puis réenregistrer » plutôt qu'afficher une impasse.
         """
-        ouverte = await self.visits.find_open_visit(visitor.id)
+        ouverte = await self.visits.find_open_visit(visitor.id, organisation)
         if ouverte is None:
             return
         raise VisitorAlreadyPresentError(
@@ -543,8 +601,16 @@ class VisitService:
         service_id: uuid.UUID = modifications.get("service_id", visit.service_id)
         agent_id: uuid.UUID | None = modifications.get("agent_id", visit.agent_id)
 
-        if "service_id" in modifications and not await self.services.exists(service_id):
-            raise ServiceNotFoundError(details={"service_id": str(service_id)})
+        if "service_id" in modifications:
+            service = await self.services.get_by_id(service_id)
+            if service is None:
+                raise ServiceNotFoundError(details={"service_id": str(service_id)})
+            # Une correction ne fait pas changer une visite de registre (ADR-023).
+            if service.organization_id != visit.organization_id:
+                raise CrossOrganizationError(
+                    "Ce service appartient à une autre organisation.",
+                    details={"service_id": str(service_id)},
+                )
 
         # Sans personne rencontrée, il n'y a plus de cohérence agent/service à
         # vérifier — y compris quand c'est le service qui change.
@@ -560,8 +626,15 @@ class VisitService:
                 )
 
         purpose_id: uuid.UUID | None = modifications.get("purpose_id")
-        if purpose_id is not None and not await self.purposes.exists(purpose_id):
-            raise PurposeNotFoundError(details={"purpose_id": str(purpose_id)})
+        if purpose_id is not None:
+            purpose = await self.purposes.get_by_id(purpose_id)
+            if purpose is None:
+                raise PurposeNotFoundError(details={"purpose_id": str(purpose_id)})
+            if purpose.organization_id not in (None, visit.organization_id):
+                raise CrossOrganizationError(
+                    "Ce motif appartient à une autre organisation.",
+                    details={"purpose_id": str(purpose_id)},
+                )
 
     async def sync_visits(
         self, payloads: list[VisitCreate], current_user: User
@@ -577,8 +650,7 @@ class VisitService:
 
         for index, payload in enumerate(payloads):
             try:
-                visit = await self._build_visit(payload, user_id)
-                await self.session.commit()
+                visit = await self._creer_avec_une_reprise(payload, user_id)
                 results.append(
                     VisitSyncItemResult(
                         index=index,
@@ -614,6 +686,29 @@ class VisitService:
                     )
                 )
 
+        return self._bilan_synchro(payloads, results)
+
+    async def _creer_avec_une_reprise(self, payload: VisitCreate, user_id: uuid.UUID) -> Visit:
+        """Crée et commit une visite du lot, avec une reprise sur conflit d'unicité.
+
+        Deux tablettes qui synchronisent la même personne au même instant se
+        heurtent à l'unicité de la pièce : la seconde reprend alors la fiche
+        créée par la première, au lieu de perdre sa visite.
+        """
+        try:
+            visit = await self._build_visit(payload, user_id)
+            await self.session.commit()
+            return visit
+        except IntegrityError:
+            await self.session.rollback()
+        visit = await self._build_visit(payload, user_id)
+        await self.session.commit()
+        return visit
+
+    @staticmethod
+    def _bilan_synchro(
+        payloads: list[VisitCreate], results: list[VisitSyncItemResult]
+    ) -> VisitSyncResponse:
         return VisitSyncResponse(
             total=len(payloads),
             created=sum(1 for r in results if r.status == "created"),

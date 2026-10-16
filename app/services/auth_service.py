@@ -16,12 +16,14 @@ from app.core.errors import (
 from app.core.logging import get_logger
 from app.core.security import (
     TokenPayload,
+    burn_password_check,
     create_access_token,
     create_refresh_token,
     decode_token,
     verify_password,
 )
 from app.models.user import User
+from app.models.user_session import UserSession
 from app.repositories.user_repository import (
     RevokedTokenRepository,
     UserRepository,
@@ -71,8 +73,9 @@ class AuthService:
         user = await self.users.get_by_identifiant(identifiant)
 
         if user is None:
-            # Même erreur que pour un mot de passe faux : ne jamais révéler
-            # l'existence d'un compte.
+            # Même erreur, et même durée, que pour un mot de passe faux : ne
+            # jamais révéler l'existence d'un compte.
+            burn_password_check(mot_de_passe)
             await self._tracer_echec(identifiant, raison="compte_inconnu")
             raise InvalidCredentialsError()
 
@@ -189,17 +192,32 @@ class AuthService:
         await self.session.commit()
 
     async def refresh(self, refresh_token: str) -> AccessTokenResponse:
+        """Émet un access token, à condition que la session du refresh token vive.
+
+        La session fait foi, et pas seulement la liste de révocation : un token
+        sans session — émis avant le suivi des sessions, ou dont la ligne a été
+        purgée — est refusé, de même qu'un token dont la session a été coupée
+        par un administrateur (ADR-023).
+        """
         payload = decode_token(refresh_token, expected_type="refresh")
         if await self.revoked.is_revoked(payload.jti):
             raise InvalidTokenError("Ce refresh token a été révoqué.")
 
+        session = await self.sessions.get_by_jti(payload.jti)
+        if session is None or session.revoked_at is not None:
+            raise InvalidTokenError("Cette session n'est plus active.")
+
         user = await self._load_active_user(payload.subject)
+        if session.user_id != user.id:
+            raise InvalidTokenError()
         maintenant = datetime.now(UTC)
         access_token, _ = create_access_token(
             str(user.id), {"role": user.role.value, "identifiant": user.identifiant}
         )
 
-        nouveau_refresh = await self._faire_glisser_la_session(user, payload, maintenant)
+        nouveau_refresh = await self._faire_glisser_la_session(
+            user, session, payload, maintenant
+        )
 
         await self.session.commit()
         return AccessTokenResponse(
@@ -209,22 +227,20 @@ class AuthService:
         )
 
     async def _faire_glisser_la_session(
-        self, user: User, payload: TokenPayload, maintenant: datetime
+        self, user: User, session: UserSession, payload: TokenPayload, maintenant: datetime
     ) -> str | None:
         """Prolonge la session d'un appareil qui sert, et retourne le nouveau token.
 
         Retourne `None` quand il n'y a rien à prolonger — c'est le cas courant.
 
-        Le glissement n'a lieu que pour une session **connue** : un refresh token
-        émis avant la mise en place du suivi des sessions n'a pas de ligne en base,
-        on se contente alors de renouveler l'access token. Il vivra jusqu'à sa
-        propre expiration, sans se prolonger.
+        Un token déjà remplacé (`previous_jti`) ne fait jamais glisser la
+        session : il vit jusqu'à sa propre expiration. Le faire glisser à son
+        tour évincerait le token courant, celui que le client a peut-être bien
+        enregistré.
         """
-        session = await self.sessions.get_by_jti(payload.jti)
-        if session is None:
-            return None
-
         session.last_used_at = maintenant
+        if payload.jti != session.jti:
+            return None
         if not settings.REFRESH_TOKEN_SLIDING or not self._proche_de_lexpiration(
             payload.expires_at, maintenant
         ):
