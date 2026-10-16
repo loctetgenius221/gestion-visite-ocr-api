@@ -1,7 +1,8 @@
 # Guide d'intégration front — évolutions de septembre et octobre 2026
 
-> **Octobre 2026** : URLs de fichiers signées, refus des références d'une autre
-> organisation, sessions, OCR serveur de secours. Voir le §14.
+> **À jour au 16 octobre 2026** — base de données en révision Alembic
+> `c6e8a2d47f19`. Dernières évolutions : URLs de fichiers signées, refus des
+> références d'une autre organisation, sessions, OCR serveur de secours (§14).
 
 Destiné aux équipes **app mobile (Flutter)** et **dashboard web**.
 
@@ -27,8 +28,12 @@ Base URL : `/api/v1` · Authentification : `Authorization: Bearer <access_token>
 | 11 | `?organization_id=` sur les listes et les statistiques | — | ✅ | Non, additif |
 | 12 | Un paramètre de requête inconnu est refusé | ✅ | ✅ | **Oui**, `400` là où c'était ignoré |
 | 13 | Import en masse des services et des agents (.xlsx) | — | ✅ | Non, additif |
+| 14 | URLs de fichiers signées et expirantes (§14.1) | ✅ | ✅ | **Oui**, si l'URL est retouchée ou mise en cache |
+| 15 | Références d'une autre organisation refusées à l'écriture (§14.2) | ✅ | ✅ | Non en usage normal |
+| 16 | Refresh token lié à une session active (§14.3) | ✅ | ✅ | Une reconnexion possible, une seule fois |
+| 17 | OCR serveur de secours activable (§14.4) | ✅ | ✅ | Non, additif |
 
-### Les quatre seuls points qui cassent quelque chose
+### Les cinq points qui cassent quelque chose
 
 1. **`POST /visits` peut désormais répondre `409 VISITOR_ALREADY_PRESENT`.** Si vous
    ne traitez pas ce code, l'agent verra une erreur générique là où il devrait voir
@@ -45,9 +50,14 @@ Base URL : `/api/v1` · Authentification : `Authorization: Bearer <access_token>
    au lieu d'être ignoré. Purgez les paramètres décoratifs — anti-cache `?_=169…`,
    `utm_*`, restes de copier-coller : ils faisaient jusqu'ici une requête valide.
    Détail et format de la réponse en §1.2.
+5. **Les URLs d'images (signature, recto, verso, MRZ) portent une signature qui
+   expire au bout d'une heure** (`?md5=…&expires=…`). Un client qui retire la
+   requête, recompose le chemin ou garde l'URL en cache reçoit `403` ou `410`.
+   Détail en §14.1.
 
 Tout le reste est additif : le code existant continue de fonctionner à l'identique.
-Les sections 8 à 10 décrivent les fonctionnalités ajoutées pour le dashboard.
+Les sections 8 à 10 décrivent les fonctionnalités ajoutées pour le dashboard, la
+section 14 les évolutions d'octobre.
 
 ## 1.1 Authentification et profil
 
@@ -95,6 +105,15 @@ POST /api/v1/auth/logout
 Content-Type: application/json
 { "refresh_token": "…" }
 ```
+
+Durées de vie par défaut : access token **30 minutes**, refresh token **30 jours**, prolongé
+tant que l'appareil sert (le nouveau refresh token arrive alors dans la réponse).
+
+`POST /api/v1/auth/forgot-password` (`{ "identifiant": "…" }`) existe mais **n'envoie
+encore rien** : elle répond toujours `202` avec un message neutre, faute de
+fournisseur mail ou SMS. N'affichez pas « un e-mail vous a été envoyé » ; un
+mot de passe oublié se règle aujourd'hui par un administrateur
+(`POST /users/{id}/reset-password`, §7.1).
 
 Le profil courant est disponible sur les deux routes suivantes :
 
@@ -260,8 +279,8 @@ Ce que cela implique côté client :
 ## 1.3 Gestion des comptes utilisateurs
 
 Toutes les routes suivantes nécessitent `ADMIN` ou `ORG_ADMIN`. Les résultats
-d'un `ORG_ADMIN` sont automatiquement limités à son organisation, même si le
-client tente d'envoyer un autre filtre `organization_id`.
+d'un `ORG_ADMIN` sont limités à son organisation ; un `organization_id` désignant
+une autre structure répond `403 CROSS_ORGANIZATION_FORBIDDEN` (§1.2).
 
 | Méthode | Route | Usage |
 |---|---|---|
@@ -383,8 +402,8 @@ Réponse — enveloppe de pagination habituelle :
       "provenance": "Ministère des Finances",
       "immatriculation_vehicule": "DK-4242-AB",
       "document_recto_url": null,
-      "document_verso_url": "/storage/uploads/mrz/2026/08/abc.png",
-      "mrz_image_url": "/storage/uploads/mrz/2026/08/abc.png",
+      "document_verso_url": "/storage/uploads/org/7e21…/mrz/2026/08/abc.png?md5=Xy3…&expires=1760630400",
+      "mrz_image_url": "/storage/uploads/org/7e21…/mrz/2026/08/abc.png?md5=Xy3…&expires=1760630400",
 
       "derniere_visite_at": "2026-08-12T09:15:00+00:00",
       "visite_ouverte_id": null
@@ -423,9 +442,12 @@ l'exploitez, l'agent ne voit jamais le 409.
   "agent_id": "…",
   "purpose_id": "…",
   "badge_number": "B-042",
-  "signature_url": "/storage/uploads/signatures/2026/08/….png"
+  "signature_url": "/storage/uploads/org/7e21…/signatures/2026/08/….png?md5=…&expires=…"
 }
 ```
+
+`signature_url` est l'`url` reçue de `POST /uploads/signature`, renvoyée telle
+quelle, signature comprise (§14.1).
 
 Réponse `201` : une `VisitRead` identique à celle du parcours habituel.
 
@@ -441,7 +463,8 @@ Réponse `201` : une `VisitRead` identique à celle du parcours habituel.
   l'autre. Proposez-les à la confirmation de l'agent plutôt que de les recopier en
   silence : la plaque du véhicule d'il y a trois mois n'est pas celle du jour.
 
-**`visitor_id` inconnu** → `404 VISITOR_NOT_FOUND`.
+**`visitor_id` inconnu**, ou personne jamais venue dans votre organisation →
+`404 VISITOR_NOT_FOUND`.
 
 ### 3.3 Le parcours de scan ne change pas
 
@@ -452,10 +475,10 @@ Aucune modification requise sur le chemin existant.
 
 ## 4. ⚠️ Un visiteur déjà présent ne peut plus entrer deux fois
 
-**C'est le seul changement de comportement sur une route existante.**
-
 Auparavant, deux visites `PRESENT` pouvaient coexister pour la même personne — ce
-qui faussait le compteur des présents du dashboard. Désormais :
+qui faussait le compteur des présents du dashboard. Désormais, **dans une même
+organisation** (une personne présente dans un autre ministère peut entrer chez
+vous) :
 
 ```http
 POST /api/v1/visits    →    409 Conflict
@@ -541,8 +564,11 @@ Content-Type: multipart/form-data
 Réponse `201` :
 
 ```json
-{ "url": "/storage/uploads/documents/recto/2026/08/8f2c1e….jpg" }
+{ "url": "/storage/uploads/org/7e21…/documents/recto/2026/08/8f2c1e….jpg?md5=…&expires=…" }
 ```
+
+Le chemin est rangé par organisation (`org/<organization_id>/…`) et l'URL est
+signée (§14.1) : gardez-la entière.
 
 Même principe que `/uploads/signature` : on dépose, on récupère l'`url`, on la
 reporte dans le payload de création de visite.
@@ -559,8 +585,8 @@ Deux champs sur le bloc `visitor` de `POST /visits` :
     "type_document": "CNI",
     "numero_document": "10120030201000558",
     "nin": "2K05201200108",
-    "document_recto_url": "/storage/uploads/documents/recto/2026/08/8f2c….jpg",
-    "document_verso_url": "/storage/uploads/documents/verso/2026/08/a41b….jpg"
+    "document_recto_url": "/storage/uploads/org/7e21…/documents/recto/2026/08/8f2c….jpg?md5=…&expires=…",
+    "document_verso_url": "/storage/uploads/org/7e21…/documents/verso/2026/08/a41b….jpg?md5=…&expires=…"
   }
 }
 ```
@@ -653,7 +679,7 @@ champs ne peuvent pas être vides.
 | Endroit | Comportement |
 |---|---|
 | Export CSV | Colonne « Personne rencontrée » **vide** |
-| `GET /dashboard/top-agents` | Ces visites sont **exclues** du classement |
+| `GET /dashboard/stats/top-agents` | Ces visites sont **exclues** du classement |
 | Répartition par service, séries temporelles, compteurs | **Inchangés** — ces visites comptent partout ailleurs |
 
 Conséquence à afficher clairement : le total de `top-agents` est inférieur au nombre
@@ -709,10 +735,21 @@ Même chose à la création : `POST /users` accepte un `mot_de_passe` optionnel.
   "max_failed_login_attempts": 5,
   "account_lockout_minutes": 15,
   "visits_export_max_rows": 50000,
+  "referentiel_import_max_rows": 5000,
   "document_images_retention_days": 365,
-  "updated_at": "2026-08-14T10:00:00+00:00"
+  "server_ocr_enabled": false,
+  "automatic_visit_closure_enabled": true,
+  "automatic_visit_closure_time": "17:00",
+  "updated_at": "2026-08-14T10:00:00+00:00",
+  "organization_id": null,
+  "scope": "platform",
+  "organization_overrides": []
 }
 ```
+
+Ci-dessus, la réponse complète au 16 octobre 2026. Les champs propres à la
+conservation des photos sont décrits ici ; les autres en §7.3 (clôture), §9.8
+(portées), §10.8 (import) et §14.4 (OCR).
 
 | Contrainte | Valeur |
 |---|---|
@@ -767,9 +804,10 @@ avec `checkout_origin: "AUTOMATIC"`, et une fiche de pièce potentiellement oubl
 est créée. Les visites entrées après l'heure limite ne sont pas clôturées
 rétroactivement le même jour.
 
-L'heure est actuellement interprétée en UTC par le service de clôture. Le frontend
-doit afficher clairement le fuseau utilisé par l'environnement déployé et ne pas
-supposer silencieusement l'heure locale de l'appareil.
+L'heure est interprétée en **UTC** par le service de clôture. Au Sénégal, UTC et
+l'heure locale coïncident ; pour une structure installée dans un autre fuseau,
+affichez « heure UTC » à côté du champ plutôt que de supposer l'heure locale de
+l'appareil.
 
 ### 7.4 Supprimer définitivement une visite
 
@@ -833,6 +871,22 @@ les indicateurs de son organisation ; le filtrage est appliqué côté serveur.
 
 `top-agents` est un classement des personnes rencontrées et non une répartition
 exhaustive : les visites dont `agent` vaut `null` sont volontairement exclues.
+Il accepte aussi `limit`.
+
+#### Export du registre
+
+```http
+GET /api/v1/visits/export?format=csv&date_from=…&date_to=…
+```
+
+- Réservé à `ADMIN` et `ORG_ADMIN` ; mêmes filtres que `GET /visits`, sans
+  pagination.
+- CSV en UTF-8 avec BOM, séparateur `;` : il s'ouvre tel quel dans Excel en
+  configuration française. Nommez le fichier côté client (voir §10.2).
+- `format=pdf` répond `501 EXPORT_FORMAT_UNAVAILABLE` : ne proposez que le CSV.
+- Au-delà de `visits_export_max_rows` lignes (50 000 par défaut), l'export est
+  refusé en `422 UNPROCESSABLE_ENTITY` plutôt que tronqué : invitez à resserrer
+  les dates.
 
 ### 7.6 Référentiels services, agents et motifs
 
@@ -1220,7 +1274,7 @@ Deux portées :
 | Portée | Paramètres | Qui écrit |
 |---|---|---|
 | Organisation | `automatic_visit_closure_enabled`, `automatic_visit_closure_time`, `visit_long_duration_alert_minutes` | `ORG_ADMIN` pour la sienne, `ADMIN` partout |
-| Plateforme | `max_failed_login_attempts`, `account_lockout_minutes`, `visits_export_max_rows`, `document_images_retention_days` | `ADMIN` uniquement |
+| Plateforme | `max_failed_login_attempts`, `account_lockout_minutes`, `visits_export_max_rows`, `referentiel_import_max_rows`, `document_images_retention_days`, `server_ocr_enabled` | `ADMIN` uniquement |
 
 Un `ORG_ADMIN` qui tente d'écrire un paramètre de plateforme reçoit `403`, avec
 la liste de ce qui est recevable :
@@ -1525,6 +1579,17 @@ unitaires.
 - [ ] Capture recto/verso sur le parcours de **saisie manuelle** uniquement, via
       `POST /uploads/document?face=…`
 - [ ] Présenter les items `conflict` de `POST /visits/sync` à l'agent
+- [ ] **Afficher et renvoyer les URLs d'images telles quelles**, requête
+      `?md5=…&expires=…` comprise ; sur `410`, relire la visite (§14.1)
+- [ ] Ne pas mettre en cache une image plus d'une heure
+- [ ] Vider le cache des référentiels quand un autre compte se connecte sur la
+      tablette (§14.2)
+- [ ] Sur `401` de `/auth/refresh`, retour à l'écran de connexion ; toujours
+      enregistrer le `refresh_token` renvoyé quand il n'est pas `null` (§14.3)
+- [ ] Repli OCR : si ML Kit échoue, consulter `GET /ocr/status` puis
+      `POST /ocr/scan` (timeout ≥ 60 s) ; `503 SERVER_OCR_DISABLED` → saisie
+      manuelle (§14.4)
+- [ ] Traiter `429` (trop de requêtes) par une attente puis une nouvelle tentative
 
 ### Dashboard web
 
@@ -1577,6 +1642,15 @@ unitaires.
 - [ ] **Suppression définitive** d'une visite (`DELETE /visits/{id}`) : confirmation
       explicite, bouton distinct de l'annulation, `404` au second appel traité
       comme un succès
+- [ ] **Afficher les images avec l'URL reçue, sans la retoucher** ; sur `410`,
+      relire la visite ou la fiche pour obtenir une URL fraîche (§14.1)
+- [ ] Case à cocher `server_ocr_enabled` dans les paramètres, visible pour
+      `ADMIN` seulement, avec l'avertissement mémoire (§14.4)
+- [ ] Champ `referentiel_import_max_rows` dans les paramètres de plateforme
+- [ ] Export CSV seul (`format=csv`) ; message « affinez les dates » sur le `422`
+- [ ] Écran « mot de passe oublié » : ne pas promettre d'envoi, renvoyer vers
+      un administrateur (§1.1)
+- [ ] Sur `401` de `/auth/refresh`, retour à l'écran de connexion (§14.3)
 
 ---
 
@@ -1594,7 +1668,7 @@ unitaires.
 | `UNSUPPORTED_IMAGE` | 400 | `POST /uploads/document` | Extension non autorisée, ou fichier vide |
 | `FILE_TOO_LARGE` | 400 | `POST /uploads/document` | Au-delà de 10 Mo |
 | `VISIT_NOT_FOUND` | 404 | `DELETE /visits/{id}` | Identifiant inconnu, ou visite déjà supprimée |
-| `FORBIDDEN` | 403 | `DELETE /visits/{id}` | Rôle autre qu'`ADMIN` |
+| `FORBIDDEN` | 403 | `DELETE /visits/{id}` | Rôle autre qu'`ADMIN` ou `ORG_ADMIN` |
 | `FORGOTTEN_DOCUMENT_CASE_NOT_FOUND` | 404 | `/forgotten-document-cases/{id}` | Fiche inconnue |
 | `FORGOTTEN_DOCUMENT_ALREADY_RESOLVED` | 409 | `POST /forgotten-document-cases/{id}/resolve` | Fiche déjà résolue |
 | `VALIDATION_ERROR` | 400 | `PUT /settings` | Heure de clôture hors format `HH:MM` ou valeur hors contraintes |
@@ -1622,32 +1696,53 @@ unitaires.
 | `IMPORT_TOO_MANY_ROWS` | 422 | Routes d'import | **Nouveau** : au-delà de `referentiel_import_max_rows` (5 000 par défaut). `details.max_rows` donne le plafond |
 | `IMPORT_PLAN_REJECTED` | 422 | `POST /services/import`, `/agents/import` | **Nouveau** : au moins une ligne en erreur — **rien n'est écrit**. `details.lignes` liste les fautives |
 
+### 12.1 Codes du socle, inchangés
+
+Pour que la liste soit complète. Ces codes existaient avant ces évolutions.
+
+| Code | HTTP | Quand | Conduite à tenir |
+|---|---|---|---|
+| `INVALID_CREDENTIALS` | 401 | Identifiant ou mot de passe faux | Message générique, sans dire lequel |
+| `LOCKED_ACCOUNT` | 401 | Trop d'échecs de connexion | Indiquer d'attendre ou de contacter un administrateur (`POST /users/{id}/unlock`) |
+| `INVALID_TOKEN` / `UNAUTHORIZED` | 401 | Token absent, expiré ou révoqué | Tenter `/auth/refresh` une fois, sinon écran de connexion |
+| `INACTIVE_USER` | 403 | Compte désactivé | Écran de connexion, contacter un administrateur |
+| `NOT_FOUND`, `SERVICE_NOT_FOUND`, `AGENT_NOT_FOUND`, `PURPOSE_NOT_FOUND`, `USER_NOT_FOUND`, `SESSION_NOT_FOUND` | 404 | Identifiant inconnu | Rafraîchir la liste |
+| `VISIT_ALREADY_CLOSED` | 409 | Clôture d'une visite déjà sortie | Traiter comme un succès, relire la visite |
+| `VISIT_CANCELLED` | 409 | Opération sur une visite annulée | Relire la visite |
+| `DUPLICATE_VISIT` | 409 | `client_reference` déjà utilisé dans l'organisation | La visite existe déjà : ne pas la recréer |
+| `ARCHIVED_REFERENTIEL` | 409 | Service, agent ou motif archivé | Rafraîchir les référentiels |
+| `MRZ_NOT_DETECTED` / `MRZ_PARSING_FAILED` | 422 | `POST /ocr/scan` n'a pas lu la MRZ | Reprendre la photo ou passer en saisie manuelle |
+| `UNPROCESSABLE_ENTITY` | 422 | Règle métier non respectée (ex. export trop volumineux) | Afficher `message` |
+| `EXPORT_FORMAT_UNAVAILABLE` | 501 | `GET /visits/export?format=pdf` | Ne proposer que le CSV |
+| `INTERNAL_ERROR` | 500 | Erreur inattendue | Message générique ; l'en-tête `X-Request-ID` permet de retrouver la trace côté serveur |
+
+Hors de ce format JSON, trois réponses viennent du proxy et **n'ont pas de corps
+JSON** : `413` (fichier au-delà de la limite du proxy), `429` (trop de requêtes)
+et `502`/`504` (API indisponible). Testez le statut HTTP avant de lire
+`error_code`.
+
 
 ## 13. Où trouver le reste
 
-- **Contrat complet et à jour** : `/docs` (Swagger) sur l'environnement de recette.
-  Les nouveaux champs y sont décrits un par un.
+- **Contrat complet et à jour** : `/docs` (Swagger) et `/openapi.json` sur
+  l'environnement de recette ; les deux sont désactivés en production. Chaque
+  champ y est décrit, et un client peut être généré depuis `/openapi.json`.
 - **Pourquoi ces choix** : `ARCHITECTURE_DECISIONS.md`, ADR-016 (NIN alphanumérique),
   ADR-017 (réenregistrement et double présence), ADR-018 (recto/verso et conservation),
   ADR-019 (personne rencontrée facultative), ADR-020 (périmètre d'organisation),
-  ADR-021 (paramètre de requête inconnu refusé), ADR-022 (import en masse).
+  ADR-021 (paramètre de requête inconnu refusé), ADR-022 (import en masse),
+  ADR-023 (cloisonnement à l'écriture et sessions), ADR-024 (URLs signées).
 
 ### 13.1 Migration de la base
 
-Les migrations sont désormais disponibles jusqu'à la révision Alembic
-`e5b7c9d1a204`. La migration `d2f4a8b91c77` couvre la clôture automatique, les
-pièces oubliées et le branding ; `e5b7c9d1a204` ajoute la valeur
-`ORG_ADMIN` à l'ENUM des rôles. La correction récente
-concernait uniquement l'exécution PostgreSQL :
+La base est en révision Alembic `c6e8a2d47f19`. Le frontend n'a aucune migration
+à effectuer et ne manipule jamais les ENUM ni la base : continuez à utiliser les
+chaînes JSON documentées (`"MANUAL"`, `"AUTOMATIC"`, `"PENDING"`, etc.).
 
-- compatibilité des timestamps avec le fuseau horaire ;
-- création explicite des types ENUM PostgreSQL `checkout_origin` et
-  `forgotten_document_status`.
-
-Cette correction ne modifie pas le contrat HTTP. Le frontend n'a aucune migration
-locale à effectuer et ne doit pas manipuler directement les ENUM ou la base de
-données. Continuez à utiliser les chaînes JSON documentées (`"MANUAL"`,
-`"AUTOMATIC"`, `"PENDING"`, etc.).
+Seul effet visible de la dernière migration : les fiches visiteurs en double
+(même type et même numéro de pièce) ont été fusionnées. Un `visitor_id` mis en
+cache sur une tablette peut donc ne plus exister (`404 VISITOR_NOT_FOUND`) :
+retrouvez la personne par `GET /visitors`.
 
 Les timestamps renvoyés par l'API restent des dates ISO 8601 avec décalage de
 fuseau, par exemple `2026-09-04T17:02:13+00:00`. Utilisez un parseur de date
@@ -1684,6 +1779,11 @@ En production, `signature_url`, `document_recto_url`, `document_verso_url`,
   pour en obtenir une fraîche, puis réaffichez. Ne mettez pas ces URLs en cache
   au-delà de l'heure.
 - Les **logos d'organisation** restent publics, sans signature.
+- En développement local, la clé de signature est souvent absente : les URLs
+  arrivent alors **sans** `?md5=…`. Le client doit fonctionner dans les deux cas,
+  ce qui est automatique s'il ne touche pas à l'URL.
+- Les fichiers déposés avant octobre gardent leur ancien chemin (sans `org/…`) ;
+  ils sont signés de la même façon. Ne déduisez rien de la forme du chemin.
 
 Une URL qui ne désigne pas un fichier du stockage (lien externe, chemin
 arbitraire) est refusée en `400 VALIDATION_ERROR`.
@@ -1738,4 +1838,10 @@ sur la tablette) : videz le cache à la connexion d'un autre compte.
 | `CROSS_ORGANIZATION_FORBIDDEN` | 403 | Création, synchro, correction de visite | Rafraîchir les référentiels ; ne pas réessayer tel quel |
 | `SERVER_OCR_DISABLED` | 503 | `POST /ocr/scan` | Saisie manuelle |
 | — | 403 / 410 | Chargement d'une image | `403` : URL modifiée. `410` : relire la visite |
-| — | 429 | Toute route | Trop de requêtes : attendre et réessayer avec temporisation |
+| — | 429 | Toute route | Trop de requêtes : attendre et réessayer avec temporisation. Corps non JSON |
+
+Plafonds appliqués par le proxy : **60 requêtes par minute et par adresse IP** sur
+`/auth/*`, et **10 requêtes par seconde par token** (donc par appareil connecté) sur le reste de
+l'API, avec une marge pour les rafales. Un usage normal n'en approche pas ; un
+`429` signale plutôt une boucle de rafraîchissement ou de nouvelles tentatives
+sans délai.
