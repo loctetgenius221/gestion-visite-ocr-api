@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
@@ -11,6 +11,7 @@ from app.core.errors import (
     AgentNotFoundError,
     AppError,
     ArchivedReferentielError,
+    BadRequestError,
     ConflictError,
     CrossOrganizationError,
     DuplicateVisitError,
@@ -27,10 +28,11 @@ from app.core.errors import (
 from app.core.logging import get_logger
 from app.core.storage_urls import appartient_a_une_autre_organisation
 from app.models.base import ensure_utc
-from app.models.enums import CheckoutOrigin, UserRole, VisitStatus
+from app.models.enums import CheckoutOrigin, ForgottenDocumentStatus, UserRole, VisitStatus
 from app.models.user import User
 from app.models.visit import Visit
 from app.models.visitor import Visitor
+from app.repositories.forgotten_document_repository import ForgottenDocumentRepository
 from app.repositories.referentiel_repository import (
     AgentRepository,
     PurposeRepository,
@@ -45,7 +47,11 @@ from app.schemas.visit import (
     VisitorRead,
     VisitorSearchResult,
     VisitRead,
+    VisitSyncCheckout,
+    VisitSyncCheckoutResult,
+    VisitSyncEntry,
     VisitSyncItemResult,
+    VisitSyncRequest,
     VisitSyncResponse,
     VisitUpdate,
 )
@@ -54,6 +60,9 @@ from app.services.export_service import ExportFormat, visits_to_csv
 from app.services.setting_service import SettingService
 
 logger = get_logger(__name__)
+
+# Avance tolérée sur l'horloge du serveur pour une heure envoyée par un client.
+TOLERANCE_HORLOGE = timedelta(minutes=5)
 
 
 class VisitService:
@@ -125,6 +134,8 @@ class VisitService:
         l'organisation de l'appelant ; sans ce contrôle, un identifiant de service
         d'une autre structure suffisait à écrire dans son registre.
         """
+        if payload.checked_in_at is not None:
+            self._refuser_horodatage_futur(payload.checked_in_at, "checked_in_at")
         service = await self.services.get_by_id(payload.service_id)
         if service is None:
             raise ServiceNotFoundError(details={"service_id": str(payload.service_id)})
@@ -636,57 +647,126 @@ class VisitService:
                     details={"purpose_id": str(purpose_id)},
                 )
 
-    async def sync_visits(
-        self, payloads: list[VisitCreate], current_user: User
-    ) -> VisitSyncResponse:
-        """Insère un batch de visites créées hors-ligne, item par item.
+    # --- Synchronisation hors-ligne (ADR-025) ----------------------------------
 
-        Chaque élément est commité indépendamment : un doublon ou une référence
-        invalide au milieu du batch ne doit pas faire perdre les visites valides.
+    async def sync_visits(
+        self,
+        request: VisitSyncRequest,
+        current_user: User,
+        *,
+        organisation: uuid.UUID | None,
+    ) -> VisitSyncResponse:
+        """Applique un lot d'entrées et de sorties saisies hors-ligne.
+
+        `organisation` est celle de l'appelant (`None` pour l'ADMIN de
+        plateforme) : chaque opération y est cantonnée, comme en ligne.
+
+        Les opérations sont rejouées **dans l'ordre chronologique** de leur
+        horodatage, entrées et sorties mêlées. C'est ce qui permet d'envoyer en
+        un seul lot un aller-retour saisi pendant une coupure : la sortie de la
+        première visite précède la seconde entrée, qui sinon serait refusée en
+        `VISITOR_ALREADY_PRESENT`. À horodatage égal, l'entrée passe d'abord.
+
+        Chaque opération est commitée seule : une ligne en échec ne coûte pas les
+        autres, et un lot renvoyé après une coupure est rejoué sans doublon — la
+        `client_reference` d'une entrée déjà enregistrée répond `already_synced`,
+        une sortie déjà enregistrée `already_closed`.
         """
-        results: list[VisitSyncItemResult] = []
         # Résolu une seule fois : l'objet `User` serait expiré par le premier rollback.
         user_id = current_user.id
 
-        for index, payload in enumerate(payloads):
-            try:
-                visit = await self._creer_avec_une_reprise(payload, user_id)
-                results.append(
-                    VisitSyncItemResult(
-                        index=index,
-                        client_reference=payload.client_reference,
-                        status="created",
-                        visit_id=visit.id,
-                    )
+        operations = [
+            (ensure_utc(entree.checked_in_at), 0, index)
+            for index, entree in enumerate(request.visits)
+        ] + [
+            (ensure_utc(sortie.checked_out_at), 1, index)
+            for index, sortie in enumerate(request.checkouts)
+        ]
+        operations.sort()
+
+        entrees: dict[int, VisitSyncItemResult] = {}
+        sorties: dict[int, VisitSyncCheckoutResult] = {}
+        for _, nature, index in operations:
+            if nature == 0:
+                entrees[index] = await self._synchroniser_entree(
+                    index, request.visits[index], user_id, organisation
                 )
-            except AppError as exc:
-                await self.session.rollback()
-                results.append(
-                    VisitSyncItemResult(
-                        index=index,
-                        client_reference=payload.client_reference,
-                        status="conflict" if exc.status_code == 409 else "error",
-                        error_code=exc.error_code,
-                        message=exc.message,
-                    )
-                )
-            except IntegrityError as exc:
-                await self.session.rollback()
-                logger.warning(
-                    "Conflit d'intégrité lors de la synchro",
-                    extra={"index": index, "reason": type(exc).__name__},
-                )
-                results.append(
-                    VisitSyncItemResult(
-                        index=index,
-                        client_reference=payload.client_reference,
-                        status="conflict",
-                        error_code=DuplicateVisitError.error_code,
-                        message=DuplicateVisitError.message,
-                    )
+            else:
+                sorties[index] = await self._synchroniser_sortie(
+                    index, request.checkouts[index], user_id, organisation
                 )
 
-        return self._bilan_synchro(payloads, results)
+        return self._bilan_synchro(
+            [entrees[i] for i in range(len(request.visits))],
+            [sorties[i] for i in range(len(request.checkouts))],
+        )
+
+    async def _synchroniser_entree(
+        self,
+        index: int,
+        entree: VisitSyncEntry,
+        user_id: uuid.UUID,
+        organisation: uuid.UUID | None,
+    ) -> VisitSyncItemResult:
+        reference = entree.client_reference
+        try:
+            payload = self._cantonner(entree, organisation)
+            visit = await self._creer_avec_une_reprise(payload, user_id)
+            return VisitSyncItemResult(
+                index=index, client_reference=reference, status="created", visit_id=visit.id
+            )
+        except DuplicateVisitError as exc:
+            # La référence est déjà au registre : c'est la même entrée, envoyée
+            # une seconde fois parce que la réponse du premier envoi s'est perdue.
+            # Un succès, avec l'identifiant qui permet au client de se recaler.
+            await self.session.rollback()
+            existante = (exc.details or {}).get("visit_id")
+            return VisitSyncItemResult(
+                index=index,
+                client_reference=reference,
+                status="already_synced" if existante else "conflict",
+                visit_id=existante,
+                error_code=None if existante else exc.error_code,
+                message=None if existante else exc.message,
+            )
+        except AppError as exc:
+            await self.session.rollback()
+            return VisitSyncItemResult(
+                index=index,
+                client_reference=reference,
+                status="conflict" if exc.status_code == 409 else "error",
+                error_code=exc.error_code,
+                message=exc.message,
+                details=exc.details,
+            )
+        except IntegrityError as exc:
+            await self.session.rollback()
+            logger.warning(
+                "Conflit d'intégrité lors de la synchro",
+                extra={"index": index, "reason": type(exc).__name__},
+            )
+            return VisitSyncItemResult(
+                index=index,
+                client_reference=reference,
+                status="conflict",
+                error_code=DuplicateVisitError.error_code,
+                message=DuplicateVisitError.message,
+            )
+
+    @staticmethod
+    def _cantonner(entree: VisitSyncEntry, organisation: uuid.UUID | None) -> VisitSyncEntry:
+        """Impose l'organisation de l'appelant à une entrée du lot.
+
+        Sans cela, une entrée sans `organization_id` prenait celle de son service :
+        un `service_id` d'une autre structure suffisait à écrire dans son
+        registre. L'ADMIN de plateforme, sans organisation propre, garde la règle
+        d'avant — celle du service.
+        """
+        if organisation is None:
+            return entree
+        if entree.organization_id not in (None, organisation):
+            raise CrossOrganizationError()
+        return entree.model_copy(update={"organization_id": organisation})
 
     async def _creer_avec_une_reprise(self, payload: VisitCreate, user_id: uuid.UUID) -> Visit:
         """Crée et commit une visite du lot, avec une reprise sur conflit d'unicité.
@@ -696,23 +776,225 @@ class VisitService:
         créée par la première, au lieu de perdre sa visite.
         """
         try:
-            visit = await self._build_visit(payload, user_id)
-            await self.session.commit()
-            return visit
+            return await self._creer_et_tracer(payload, user_id)
         except IntegrityError:
             await self.session.rollback()
+        return await self._creer_et_tracer(payload, user_id)
+
+    async def _creer_et_tracer(self, payload: VisitCreate, user_id: uuid.UUID) -> Visit:
         visit = await self._build_visit(payload, user_id)
+        visit.recorded_offline = True
+        await self.audit.record(
+            AuditAction.VISIT_CREATED,
+            entity="visit",
+            entity_id=visit.id,
+            actor=await self._auteur(user_id),
+            organization_id=visit.organization_id,
+            metadata={
+                "service_id": visit.service_id,
+                "agent_id": visit.agent_id,
+                "client_reference": visit.client_reference,
+                "visiteur_reutilise": payload.visitor_id is not None,
+                "source": "sync",
+            },
+            context=self.context,
+        )
         await self.session.commit()
         return visit
 
+    async def _auteur(self, user_id: uuid.UUID) -> User | None:
+        """L'auteur, relu : un rollback précédent du lot a expiré l'instance."""
+        return await self.session.get(User, user_id, populate_existing=True)
+
+    async def _synchroniser_sortie(
+        self,
+        index: int,
+        sortie: VisitSyncCheckout,
+        user_id: uuid.UUID,
+        organisation: uuid.UUID | None,
+    ) -> VisitSyncCheckoutResult:
+        try:
+            return await self._cloturer_hors_ligne(index, sortie, user_id, organisation)
+        except AppError as exc:
+            await self.session.rollback()
+            return VisitSyncCheckoutResult(
+                index=index,
+                visit_id=sortie.visit_id,
+                client_reference=sortie.client_reference,
+                status="conflict" if exc.status_code == 409 else "error",
+                error_code=exc.error_code,
+                message=exc.message,
+                details=exc.details,
+            )
+
+    async def _cloturer_hors_ligne(
+        self,
+        index: int,
+        sortie: VisitSyncCheckout,
+        user_id: uuid.UUID,
+        organisation: uuid.UUID | None,
+    ) -> VisitSyncCheckoutResult:
+        """Enregistre une sortie à l'heure où elle a eu lieu, pas à l'heure du réseau.
+
+        Une visite déjà clôturée **automatiquement** est corrigée : l'heure saisie
+        par l'agent est la vraie, celle de la tâche de 17 h n'était qu'un repli.
+        La fiche de pièce potentiellement oubliée qu'elle avait ouverte est
+        résolue — la sortie enregistrée au poste prouve que la pièce a été rendue.
+        """
+        visit = await self._visite_a_cloturer(sortie, organisation)
+        moment = ensure_utc(sortie.checked_out_at)
+        self._refuser_horodatage_futur(moment, "checked_out_at")
+
+        if visit.statut is VisitStatus.ANNULEE:
+            raise VisitCancelledError(details={"visit_id": str(visit.id)})
+        if moment < ensure_utc(visit.checked_in_at):
+            raise UnprocessableError(
+                "La sortie ne peut pas précéder l'entrée.",
+                error_code="INVALID_VISIT_INTERVAL",
+                details={
+                    "visit_id": str(visit.id),
+                    "checked_in_at": visit.checked_in_at,
+                    "checked_out_at": moment,
+                },
+            )
+
+        resultat = {
+            "index": index,
+            "visit_id": visit.id,
+            "client_reference": sortie.client_reference or visit.client_reference,
+        }
+        if visit.statut is VisitStatus.SORTI and visit.checkout_origin is not (
+            CheckoutOrigin.AUTOMATIC
+        ):
+            return VisitSyncCheckoutResult(
+                **resultat,
+                status="already_closed",
+                checked_out_at=ensure_utc(visit.checked_out_at) if visit.checked_out_at else None,
+            )
+
+        correction = visit.statut is VisitStatus.SORTI
+        sortie_automatique = visit.checked_out_at
+        visit.statut = VisitStatus.SORTI
+        visit.checked_out_at = moment
+        visit.checked_out_by = user_id
+        visit.checkout_origin = CheckoutOrigin.MANUAL
+
+        auteur = await self._auteur(user_id)
+        await self.audit.record(
+            AuditAction.VISIT_CHECKOUT,
+            entity="visit",
+            entity_id=visit.id,
+            actor=auteur,
+            organization_id=visit.organization_id,
+            metadata={
+                "checked_out_at": moment,
+                "source": "sync",
+                **(
+                    {"cloture_automatique_corrigee": sortie_automatique}
+                    if correction
+                    else {}
+                ),
+            },
+            context=self.context,
+        )
+        if correction:
+            await self._resoudre_piece_oubliee(visit, user_id, auteur, moment)
+        await self.session.commit()
+
+        return VisitSyncCheckoutResult(
+            **resultat,
+            status="closed",
+            checked_out_at=moment,
+            details={"cloture_automatique_corrigee": True} if correction else None,
+        )
+
+    async def _visite_a_cloturer(
+        self, sortie: VisitSyncCheckout, organisation: uuid.UUID | None
+    ) -> Visit:
+        if sortie.visit_id is not None:
+            visit = await self.visits.get_by_id(sortie.visit_id)
+            if visit is None:
+                raise VisitNotFoundError(details={"visit_id": str(sortie.visit_id)})
+            if organisation is not None and visit.organization_id != organisation:
+                raise CrossOrganizationError("Accès limité aux visites de votre organisation.")
+            return visit
+
+        assert sortie.client_reference is not None
+        if organisation is None:
+            # La référence n'est unique qu'au sein d'une organisation.
+            raise BadRequestError(
+                "Un compte de plateforme désigne la visite par `visit_id`.",
+                details={"client_reference": sortie.client_reference},
+            )
+        visit = await self.visits.get_by_client_reference(sortie.client_reference, organisation)
+        if visit is None:
+            raise VisitNotFoundError(details={"client_reference": sortie.client_reference})
+        return visit
+
+    async def _resoudre_piece_oubliee(
+        self, visit: Visit, user_id: uuid.UUID, auteur: User | None, moment: datetime
+    ) -> None:
+        fiche = await ForgottenDocumentRepository(self.session).get_by_visit_id(visit.id)
+        if fiche is None or fiche.status is ForgottenDocumentStatus.RESOLVED:
+            return
+        fiche.status = ForgottenDocumentStatus.RESOLVED
+        fiche.resolved_at = datetime.now(UTC)
+        fiche.resolved_by = user_id
+        fiche.resolution_note = (
+            "Sortie enregistrée hors-ligne au poste de contrôle "
+            f"({moment.isoformat(timespec='minutes')}) : pièce restituée."
+        )
+        await self.audit.record(
+            AuditAction.FORGOTTEN_DOC_RESOLVED,
+            entity="forgotten_document_case",
+            entity_id=fiche.id,
+            actor=auteur,
+            organization_id=visit.organization_id,
+            metadata={"visit_id": str(visit.id), "source": "sync"},
+            context=self.context,
+        )
+
+    @staticmethod
+    def _refuser_horodatage_futur(moment: datetime, champ: str) -> None:
+        """Refuse une heure postérieure à celle du serveur, à la tolérance près.
+
+        Une tablette dont l'horloge avance inscrirait des visites dans le futur :
+        elles échapperaient à la clôture automatique et fausseraient les
+        statistiques du jour. La tolérance absorbe la dérive ordinaire d'une
+        horloge synchronisée par le réseau mobile.
+        """
+        maintenant = datetime.now(UTC)
+        if ensure_utc(moment) > maintenant + TOLERANCE_HORLOGE:
+            raise UnprocessableError(
+                "L'heure envoyée est dans le futur : vérifiez l'horloge de l'appareil.",
+                error_code="TIMESTAMP_IN_FUTURE",
+                details={
+                    "champ": champ,
+                    "valeur": moment,
+                    "heure_serveur": maintenant,
+                    "tolerance_secondes": int(TOLERANCE_HORLOGE.total_seconds()),
+                },
+            )
+
     @staticmethod
     def _bilan_synchro(
-        payloads: list[VisitCreate], results: list[VisitSyncItemResult]
+        entrees: list[VisitSyncItemResult], sorties: list[VisitSyncCheckoutResult]
     ) -> VisitSyncResponse:
+        def compte(resultats: list[Any], statut: str) -> int:
+            return sum(1 for r in resultats if r.status == statut)
+
         return VisitSyncResponse(
-            total=len(payloads),
-            created=sum(1 for r in results if r.status == "created"),
-            conflicts=sum(1 for r in results if r.status == "conflict"),
-            errors=sum(1 for r in results if r.status == "error"),
-            results=results,
+            server_time=datetime.now(UTC),
+            total=len(entrees),
+            created=compte(entrees, "created"),
+            already_synced=compte(entrees, "already_synced"),
+            conflicts=compte(entrees, "conflict"),
+            errors=compte(entrees, "error"),
+            results=entrees,
+            checkout_total=len(sorties),
+            checkout_closed=compte(sorties, "closed"),
+            checkout_already_closed=compte(sorties, "already_closed"),
+            checkout_conflicts=compte(sorties, "conflict"),
+            checkout_errors=compte(sorties, "error"),
+            checkout_results=sorties,
         )

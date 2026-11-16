@@ -58,10 +58,15 @@ class TestReferencesDUneAutreOrganisation:
     async def test_la_synchro_hors_ligne_applique_la_meme_regle(
         self, client: AsyncClient, seeded: dict, auth_headers: dict, voisine: dict
     ):
+        entree = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         etrangere = visit_payload(
-            seeded, service_id=str(voisine["service"].id), agent_id=None, client_reference="S-1"
+            seeded,
+            service_id=str(voisine["service"].id),
+            agent_id=None,
+            client_reference="SYNC-REF-1",
+            checked_in_at=entree,
         )
-        valide = visit_payload(seeded, client_reference="S-2")
+        valide = visit_payload(seeded, client_reference="SYNC-REF-2", checked_in_at=entree)
         valide["visitor"]["numero_document"] = "SYNC000002"
 
         response = await client.post(

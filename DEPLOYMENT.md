@@ -127,21 +127,43 @@ Schéma, données initiales et préchargement des modèles OCR :
 # la migration, ce que le propriétaire de la base a le droit de faire.
 uv run alembic upgrade head
 
-# Référentiels et comptes agents — SEED_AGENT_PASSWORD doit être renseigné,
-# faire au moins 12 caractères et différer du mot de passe de démonstration.
-# Crée aussi l'organisation `MIN-INTERIEUR`, à laquelle tous les comptes sont
-# rattachés sauf `admin001` : `ADMIN` est le seul rôle global de la plateforme.
-uv run python -m app.seeds
+# Base neuve : organisation et motifs communs, rien de fictif. Idempotent.
+# Sans argument : la structure pilote, MFPTRSP (Ministère de la Fonction
+# Publique, du Travail et de la Réforme du Service public).
+uv run python -m app.bootstrap
 
-# Télécharge les modèles PaddleOCR (~500 Mo) maintenant plutôt qu'au premier scan
-uv run python -c "from app.services.ocr_engine import get_ocr_engine; get_ocr_engine().load()"
+# Services et agents depuis l'annuaire du ministère (voir « Annuaire » ci-dessous) :
+# simulation d'abord, puis en réel.
+uv run python -m app.import_annuaire /home/sigv/annuaire-mfptrsp.csv --organisation MFPTRSP --dry-run
+uv run python -m app.import_annuaire /home/sigv/annuaire-mfptrsp.csv --organisation MFPTRSP
+
+# Comptes. Sans --mot-de-passe, un mot de passe fort est généré et affiché une
+# fois. Un mot de passe passé en argument reste dans l'historique du shell :
+# effacez-le ensuite (`history -d`), ou laissez le générer.
+uv run python -m app.create_user admin --role ADMIN --nom "Administrateur plateforme"
+uv run python -m app.create_user superviseur001 --role SUPERVISEUR --nom "Superviseur accueil" --organisation MFPTRSP
+uv run python -m app.create_user agent001 --role AGENT_CONTROLE --nom "Poste police" --poste "Poste de police — entrée" --organisation MFPTRSP
+
+# Uniquement si l'OCR serveur de secours doit être activé : télécharge les
+# modèles PaddleOCR (~500 Mo) maintenant plutôt qu'au premier scan.
+# uv run python -c "from app.services.ocr_engine import get_ocr_engine; get_ocr_engine().load()"
 ```
+
+À défaut de CSV, les référentiels s'importent depuis le dashboard connecté en
+`admin` : **services**, puis **agents**, avec les modèles `.xlsx` (dans cet ordre,
+l'import des agents refuse un service inconnu). Les motifs propres à
+l'organisation s'ajoutent depuis l'écran des motifs.
+
+> `app.seeds` sert au développement et à la recette : même organisation, mais
+> un mot de passe commun à tous les comptes. Avec `--annuaire`, il charge
+> l'annuaire réel au lieu des agents fictifs.
 
 ### Annuaire du ministère
 
-`app.seeds` pose des services et des agents **de démonstration**. En production,
-remplissez les référentiels depuis l'export CSV de l'annuaire, une fois le schéma
-migré :
+Le fichier source est l'export de l'annuaire, **hors du dépôt** : il contient des
+données personnelles, et `/*.csv` est ignoré par git. Utilisez la copie corrigée
+`annuaire-mfptrsp.csv`, dont les libellés de services sont propres. Déposez-la
+sur le serveur, lisible par `sigv` seul :
 
 ```bash
 # Déposez le CSV hors du dépôt, lisible par l'utilisateur `sigv` uniquement

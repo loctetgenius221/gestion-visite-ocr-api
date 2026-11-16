@@ -1,8 +1,12 @@
 # Guide d'intégration front — évolutions de septembre et octobre 2026
 
-> **À jour au 16 octobre 2026** — base de données en révision Alembic
-> `c6e8a2d47f19`. Dernières évolutions : URLs de fichiers signées, refus des
-> références d'une autre organisation, sessions, OCR serveur de secours (§14).
+> **À jour au 10 novembre 2026** — base de données en révision Alembic
+> `c6e8a2d47f19`. Dernières évolutions : **mode hors-ligne complet (§15)** et
+> **nouvel environnement de production (§16)** ; en octobre, URLs de fichiers
+> signées, cloisonnement, sessions, OCR serveur de secours (§14).
+>
+> **Développeur mobile, lisez dans cet ordre** : §16 (ce qui change avec la
+> nouvelle base), §15 (hors-ligne), §14, puis la checklist mobile du §11.
 
 Destiné aux équipes **app mobile (Flutter)** et **dashboard web**.
 
@@ -32,6 +36,8 @@ Base URL : `/api/v1` · Authentification : `Authorization: Bearer <access_token>
 | 15 | Références d'une autre organisation refusées à l'écriture (§14.2) | ✅ | ✅ | Non en usage normal |
 | 16 | Refresh token lié à une session active (§14.3) | ✅ | ✅ | Une reconnexion possible, une seule fois |
 | 17 | OCR serveur de secours activable (§14.4) | ✅ | ✅ | Non, additif |
+| 18 | Hors-ligne : sorties synchronisées, idempotence, référentiels et présents (§15) | ✅ | — | **Oui**, `POST /visits/sync` exige `client_reference` et `checked_in_at` avec fuseau |
+| 19 | Nouvelle base de production (§16) | ✅ | ✅ | **Oui**, nouveaux identifiants, caches à vider |
 
 ### Les cinq points qui cassent quelque chose
 
@@ -517,26 +523,10 @@ le `POST /visits`.
 
 ### Mode hors-ligne
 
-`POST /visits/sync` renvoie toujours `200`, avec le détail par item. Une entrée en
-conflit apparaît ainsi :
-
-```json
-{
-  "index": 2,
-  "client_reference": "abc-123",
-  "status": "conflict",
-  "error_code": "VISITOR_ALREADY_PRESENT",
-  "message": "Ce visiteur a déjà une visite en cours : …"
-}
-```
-
-> **Limite connue, à avoir en tête.** `POST /visits/sync` ne transporte que des
-> **entrées**, jamais les sorties saisies hors-ligne. Un aller-retour de la même
-> personne dans la même journée sans connexion verra donc sa seconde entrée
-> remonter en `conflict`. Rien n'est perdu en silence — le batch le signale item par
-> item — mais présentez ces conflits à l'agent plutôt que de les avaler. La synchro
-> des clôtures reste à spécifier : remontez-nous le besoin s'il est réel sur le
-> terrain.
+En synchro, le même conflit sort sur la ligne concernée, `details` compris :
+`status: "conflict"`, `error_code: "VISITOR_ALREADY_PRESENT"`. Les sorties saisies
+hors-ligne sont désormais synchronisées elles aussi, et un aller-retour pendant
+une coupure passe en un seul lot. Tout est décrit au §15.
 
 ---
 
@@ -801,8 +791,11 @@ Content-Type: application/json
 Le réglage est réservé aux administrateurs. Une tâche planifiée clôture les
 visites `PRESENT` entrées avant l'heure configurée. Elles deviennent `SORTI`,
 avec `checkout_origin: "AUTOMATIC"`, et une fiche de pièce potentiellement oubliée
-est créée. Les visites entrées après l'heure limite ne sont pas clôturées
-rétroactivement le même jour.
+est créée. Chaque visite est clôturée **à la première heure limite qui suit son
+entrée**, et c'est cette heure qui devient `checked_out_at`. Une visite entrée
+à 10 h sort à 17 h, quelle que soit l'heure à laquelle la tâche est passée. Une
+visite entrée à 18 h sort le lendemain à 17 h. La tâche passe toutes les
+5 minutes : une visite synchronisée en retard est rattrapée au passage suivant.
 
 L'heure est interprétée en **UTC** par le service de clôture. Au Sénégal, UTC et
 l'heure locale coïncident ; pour une structure installée dans un autre fuseau,
@@ -885,7 +878,7 @@ GET /api/v1/visits/export?format=csv&date_from=…&date_to=…
   configuration française. Nommez le fichier côté client (voir §10.2).
 - `format=pdf` répond `501 EXPORT_FORMAT_UNAVAILABLE` : ne proposez que le CSV.
 - Au-delà de `visits_export_max_rows` lignes (50 000 par défaut), l'export est
-  refusé en `422 UNPROCESSABLE_ENTITY` plutôt que tronqué : invitez à resserrer
+  refusé en `422 EXPORT_TOO_LARGE` plutôt que tronqué : invitez à resserrer
   les dates.
 
 ### 7.6 Référentiels services, agents et motifs
@@ -1590,6 +1583,9 @@ unitaires.
       `POST /ocr/scan` (timeout ≥ 60 s) ; `503 SERVER_OCR_DISABLED` → saisie
       manuelle (§14.4)
 - [ ] Traiter `429` (trop de requêtes) par une attente puis une nouvelle tentative
+- [ ] **Hors-ligne** : suivre la checklist dédiée du §15.12
+- [ ] **Nouvel environnement** : `baseUrl` par `--dart-define`, purge des anciennes
+      données locales au premier lancement (§16)
 
 ### Dashboard web
 
@@ -1712,7 +1708,10 @@ Pour que la liste soit complète. Ces codes existaient avant ces évolutions.
 | `DUPLICATE_VISIT` | 409 | `client_reference` déjà utilisé dans l'organisation | La visite existe déjà : ne pas la recréer |
 | `ARCHIVED_REFERENTIEL` | 409 | Service, agent ou motif archivé | Rafraîchir les référentiels |
 | `MRZ_NOT_DETECTED` / `MRZ_PARSING_FAILED` | 422 | `POST /ocr/scan` n'a pas lu la MRZ | Reprendre la photo ou passer en saisie manuelle |
-| `UNPROCESSABLE_ENTITY` | 422 | Règle métier non respectée (ex. export trop volumineux) | Afficher `message` |
+| `EXPORT_TOO_LARGE` | 422 | Export au-delà de `visits_export_max_rows` | Inviter à resserrer les dates |
+| `INVALID_VISIT_INTERVAL` | 422 | Sortie antérieure à l'entrée (correction ou synchro) | Faire corriger l'heure |
+| `TIMESTAMP_IN_FUTURE` | 422 | Heure d'entrée ou de sortie en avance de plus de 5 min sur le serveur | Recaler l'horloge de l'appareil (§15.4) |
+| `UNPROCESSABLE_ENTITY` | 422 | Autre règle métier non respectée | Afficher `message` |
 | `EXPORT_FORMAT_UNAVAILABLE` | 501 | `GET /visits/export?format=pdf` | Ne proposer que le CSV |
 | `INTERNAL_ERROR` | 500 | Erreur inattendue | Message générique ; l'en-tête `X-Request-ID` permet de retrouver la trace côté serveur |
 
@@ -1731,7 +1730,8 @@ et `502`/`504` (API indisponible). Testez le statut HTTP avant de lire
   ADR-017 (réenregistrement et double présence), ADR-018 (recto/verso et conservation),
   ADR-019 (personne rencontrée facultative), ADR-020 (périmètre d'organisation),
   ADR-021 (paramètre de requête inconnu refusé), ADR-022 (import en masse),
-  ADR-023 (cloisonnement à l'écriture et sessions), ADR-024 (URLs signées).
+  ADR-023 (cloisonnement à l'écriture et sessions), ADR-024 (URLs signées),
+  ADR-025 (synchronisation hors-ligne).
 
 ### 13.1 Migration de la base
 
@@ -1845,3 +1845,362 @@ Plafonds appliqués par le proxy : **60 requêtes par minute et par adresse IP**
 l'API, avec une marge pour les rafales. Un usage normal n'en approche pas ; un
 `429` signale plutôt une boucle de rafraîchissement ou de nouvelles tentatives
 sans délai.
+
+---
+
+## 15. Mode hors-ligne — app mobile
+
+Objectif : l'agent d'accueil enregistre entrées et sorties **sans réseau**, et
+rien n'est perdu ni compté deux fois quand le réseau revient. Décisions et
+raisons : ADR-025.
+
+### 15.1 Le principe en une phrase
+
+Chaque geste de l'agent est d'abord écrit dans une **file d'attente locale**
+(*outbox*), puis envoyé au serveur par `POST /visits/sync`. Ce que l'agent voit
+pendant la coupure est la base locale. Au retour du réseau, c'est le serveur qui
+tranche.
+
+Trois propriétés de l'API rendent ce modèle sûr. Elles fonctionnent à condition
+de les respecter côté app :
+
+| Propriété | Ce que le serveur garantit | Ce que l'app doit faire |
+|---|---|---|
+| **Idempotence** | Renvoyer une entrée déjà enregistrée répond `already_synced` avec son `visit_id`, et une sortie déjà enregistrée répond `already_closed`. Rien n'est créé deux fois. | Générer la `client_reference` **une seule fois**, au moment du geste, et ne jamais la changer |
+| **Ordre chronologique** | Le lot est rejoué dans l'ordre des heures, entrées et sorties mêlées, quel que soit l'ordre d'envoi | Envoyer la vraie heure de chaque geste |
+| **Isolement** | Chaque ligne est enregistrée seule, et une erreur sur une ligne ne coûte pas les autres | Lire le résultat **ligne par ligne**, ne jamais conclure sur le seul code HTTP |
+
+### 15.2 Préparer le hors-ligne : deux lectures
+
+À faire après la connexion, au retour au premier plan et à chaque retour du réseau.
+
+**Référentiels** — `GET /sync/referentiels`
+
+```http
+GET /api/v1/sync/referentiels
+Authorization: Bearer …
+If-None-Match: "3f9c…"          ← version gardée de la réponse précédente
+```
+
+- `304 Not Modified`, sans corps : rien n'a changé, gardez votre cache.
+- `200` : instantané complet, avec un nouvel en-tête `ETag`. **Remplacez** les
+  tables locales en bloc, dans une seule transaction, et gardez le champ `version`.
+
+```json
+{
+  "version": "3f9c0a…",
+  "server_time": "2026-11-10T09:00:00.123456Z",
+  "organization": { "id": "…", "nom": "…", "code": "…", "logo_url": "…", "primary_color": "#…", "…": "…" },
+  "services": [ { "id": "…", "code": "DRH", "name": "…", "floor": "2e étage", "parent_id": null, "organization_id": "…" } ],
+  "agents":   [ { "id": "…", "name": "…", "role": "…", "office": "B201", "service_id": "…", "organization_id": "…" } ],
+  "purposes": [ { "id": "…", "libelle": "Dépôt de dossier", "organization_id": null } ],
+  "parametres": {
+    "automatic_visit_closure_enabled": true,
+    "automatic_visit_closure_time": "17:00",
+    "visit_long_duration_alert_minutes": 120,
+    "server_ocr_enabled": false
+  }
+}
+```
+
+Points à respecter :
+- Seuls les éléments **actifs** sont présents. Un élément archivé disparaît de
+  l'instantané : retirez-le des listes de choix.
+- `services` est une liste à plat. Reconstruisez la hiérarchie avec `parent_id`.
+- Un `ADMIN` de plateforme doit ajouter `?organization_id=`, sinon il reçoit
+  `400 ORGANIZATION_REQUIRED`. Les comptes de terrain n'ont rien à préciser.
+
+**Présents** — `GET /sync/presents`
+
+```json
+{ "server_time": "…", "total": 12, "tronque": false, "items": [ /* VisitRead */ ] }
+```
+
+Cette liste contient toutes les visites encore ouvertes de l'organisation, y
+compris celles saisies sur d'autres tablettes. Elle sert à deux choses hors-ligne :
+- **enregistrer une sortie** : la tablette connaît alors le `visit_id` ;
+- **détecter un « déjà présent »** avant d'enregistrer quelqu'un (§15.3).
+
+La liste est plafonnée à 1 000 visites (`tronque: true` au-delà). Remplacez la
+table locale en bloc.
+
+### 15.3 Enregistrer sans réseau
+
+**Une entrée**
+
+1. Générez `client_reference` avec un UUID v4 (paquet `uuid`, `const Uuid().v4()`),
+   **avant toute autre chose**, et enregistrez-la avec la ligne. Elle doit faire
+   entre 8 et 100 caractères ; un UUID convient.
+2. Relevez `checked_in_at` : l'heure corrigée (§15.4), **en UTC avec son fuseau**.
+3. Pour l'identité, envoyez le bloc `visitor` complet, issu du scan ML Kit (qui
+   fonctionne hors-ligne) ou de la saisie manuelle. N'utilisez `visitor_id` que
+   pour une personne déjà connue du cache des présents : un `visitor_id` que le
+   serveur ne rattache pas à votre organisation répond `404 VISITOR_NOT_FOUND`.
+4. Les photos (recto, verso) et la signature sont enregistrées dans le dossier
+   **documents** de l'app (`getApplicationDocumentsDirectory()`), jamais dans le
+   dossier temporaire, que le système peut vider. Elles seront déposées avant
+   l'envoi de la visite (§15.5).
+5. **Contrôlez la présence localement** avant de valider : la personne (même
+   `type_document` et même `numero_document`) figure-t-elle dans le cache des
+   présents, ou dans une entrée locale sans sortie ? Si oui, affichez l'écran
+   « déjà présent » du §4, comme en ligne. Le serveur fera de toute façon ce
+   contrôle à la synchro ; le faire avant évite à l'agent un conflit qu'il
+   devrait traiter plus tard.
+
+> ⚠️ **Le piège Dart le plus probable.** `DateTime.now().toIso8601String()` produit
+> une heure **sans fuseau** (`2026-11-10T09:15:00.000`), que l'API refuse en
+> `400`. Utilisez `DateTime.now().toUtc().toIso8601String()`, qui produit
+> `2026-11-10T09:15:00.000Z`.
+
+**Une sortie**
+
+| La visite… | Désignez-la par | Exemple |
+|---|---|---|
+| est connue du serveur (cache des présents, ou entrée déjà synchronisée) | `visit_id` | `{"visit_id": "9a2e…", "checked_out_at": "…Z"}` |
+| a été saisie hors-ligne et n'est pas encore synchronisée | la `client_reference` de son entrée | `{"client_reference": "5b1f…", "checked_out_at": "…Z"}` |
+
+Jamais les deux à la fois : la requête répondrait `400`. Une sortie peut partir
+dans le même lot que son entrée.
+
+### 15.4 L'horloge de la tablette
+
+Toutes les heures hors-ligne viennent de la tablette. Une horloge qui retarde
+fausse le registre ; une horloge qui avance de plus de **5 minutes** est refusée
+(`TIMESTAMP_IN_FUTURE`).
+
+- Calculez un **décalage** à chaque réponse du serveur :
+  `decalage = server_time − heure de l'appareil à la réception`. `server_time`
+  figure dans les réponses de `/sync/referentiels`, `/sync/presents` et
+  `/visits/sync` ; l'en-tête HTTP `Date` peut servir à défaut, mais il n'est
+  précis qu'à la seconde.
+- Horodatez chaque geste avec `DateTime.now().toUtc().add(decalage)`.
+- Conservez le décalage en local : il reste valable pendant la coupure.
+- Si le décalage dépasse quelques minutes, prévenez l'agent : « l'heure de la
+  tablette est fausse ».
+
+### 15.5 Synchroniser : l'algorithme
+
+**Déclencheurs** : retour au premier plan, retour du réseau, après chaque geste
+quand le réseau est là, et toutes les 2 minutes environ tant que la file n'est pas
+vide et que l'app est au premier plan. Une tâche en arrière-plan (`workmanager`)
+peut compléter ces déclencheurs, mais Android et iOS décident seuls de sa fréquence :
+ne comptez pas dessus.
+
+**Ne vous fiez pas à `connectivity_plus` pour décider d'envoyer.** Sa documentation
+officielle le dit : *« Connection type availability does not guarantee that
+there is an Internet access »* (un Wi-Fi d'hôtel avec portail captif, par
+exemple). Servez-vous-en comme d'un signal pour **essayer**, et laissez le
+résultat de la requête trancher. À noter : dans la version 7.x, `onConnectivityChanged`
+émet une `List<ConnectivityResult>`, plus une valeur seule.
+
+**Déroulé** :
+
+1. **Un seul envoi à la fois.** Utilisez un verrou (*single-flight*). Deux
+   synchros simultanées ne créeraient pas de doublon, grâce à l'idempotence, mais
+   elles brouilleraient l'état local.
+2. **Token** : si l'access token expire dans moins d'une minute, appelez d'abord
+   `/auth/refresh`.
+3. **Fichiers** : déposez chaque photo ou signature en attente
+   (`POST /uploads/document?face=…`, `POST /uploads/signature`). Enregistrez
+   l'`url` reçue dans la ligne locale, puis reportez-la dans le payload. Une
+   entrée dont un fichier n'est pas encore déposé attend le prochain tour.
+   L'URL reste valable dans `POST /visits/sync` même après l'expiration de sa
+   signature : le serveur ne garde que le chemin.
+4. **Lots** : au plus **200 entrées et 200 sorties** par requête, les plus
+   anciennes d'abord. Une sortie désignée par `client_reference` part dans le même
+   lot que son entrée, ou dans un lot suivant.
+5. **Envoi** : `POST /visits/sync`, avec un timeout de réception de 60 s.
+6. **Lecture du résultat**, ligne par ligne (§15.6). Mettez à jour chaque ligne
+   locale dans une transaction.
+7. **Relecture** : `GET /sync/presents`, puis `GET /sync/referentiels` avec
+   `If-None-Match`.
+
+**Échec de transport** (timeout, coupure, `5xx`, `502`/`504` du proxy, `429`) :
+ne changez **rien** à la file locale et réessayez plus tard avec un délai qui
+grandit (par exemple 5 s, 15 s, 1 min, 5 min, puis 5 min), plus une petite part
+d'aléatoire pour que toutes les tablettes ne reviennent pas à la même seconde.
+Renvoyer le même lot est **sans risque** : c'est l'idempotence qui le permet.
+Une réponse perdue après enregistrement reviendra en `already_synced`.
+
+**`401`** : tentez `/auth/refresh` une fois, puis rejouez. Si le refresh échoue
+lui aussi, renvoyez vers l'écran de connexion **sans toucher à la file**.
+
+**`400` sur le lot entier** (`VALIDATION_ERROR`) : c'est un défaut de l'app, pas
+du réseau. Ne bouclez pas. Isolez la ligne fautive en renvoyant les lignes une à
+une, marquez-la « à traiter » avec `details`, et laissez partir les autres.
+
+### 15.5 bis Reconnaître une visite saisie hors ligne
+
+Toute visite créée par `POST /visits/sync` porte **`recorded_offline: true`**
+dans `VisitRead`, y compris une fois transmise ; `false` pour une visite saisie
+en ligne. L'app l'affiche par un badge discret « Saisie hors ligne », et
+« Pas encore envoyée » tant que la visite n'est que sur la tablette. L'heure
+d'entrée de ces visites vient de la tablette.
+
+### 15.6 Le résultat, ligne par ligne
+
+```json
+{
+  "server_time": "2026-11-10T10:02:11.004Z",
+  "total": 3, "created": 1, "already_synced": 1, "conflicts": 1, "errors": 0,
+  "results": [
+    { "index": 0, "client_reference": "5b1f…", "status": "created", "visit_id": "9a2e…" },
+    { "index": 1, "client_reference": "77ac…", "status": "already_synced", "visit_id": "c41d…" },
+    { "index": 2, "client_reference": "e0b2…", "status": "conflict",
+      "error_code": "VISITOR_ALREADY_PRESENT", "message": "…",
+      "details": { "visitor_id": "…", "visit_id": "f00d…", "checked_in_at": "…" } }
+  ],
+  "checkout_total": 1, "checkout_closed": 1, "checkout_already_closed": 0,
+  "checkout_conflicts": 0, "checkout_errors": 0,
+  "checkout_results": [
+    { "index": 0, "visit_id": "9a2e…", "client_reference": "5b1f…",
+      "status": "closed", "checked_out_at": "2026-11-10T09:58:00Z" }
+  ]
+}
+```
+
+`index` désigne la position dans `visits` ou dans `checkouts` **tels que vous les
+avez envoyés**, même si le serveur les a rejoués dans un autre ordre.
+
+| Statut | Signification | Action dans l'app |
+|---|---|---|
+| `created`, `already_synced` | Visite enregistrée | Stocker `visit_id`, marquer « synchronisée », supprimer les photos locales |
+| `closed`, `already_closed` | Sortie enregistrée | Marquer « synchronisée ». Pour `already_closed`, afficher `checked_out_at`, l'heure retenue par le serveur |
+| `conflict`, `error` | Rien n'a été écrit pour cette ligne | Marquer « à traiter », avec `error_code`, `message` et `details`. **Pas de nouvel envoi automatique** |
+
+Une sortie `closed` qui porte `details.cloture_automatique_corrigee: true`
+signale que le serveur avait clôturé la visite à l'heure de la clôture
+automatique, faute de sortie connue. L'heure saisie par l'agent la remplace, et la
+fiche de pièce potentiellement oubliée qui avait été ouverte est résolue.
+
+### 15.7 Que faire de chaque ligne « à traiter »
+
+| `error_code` | Cause probable | Action proposée à l'agent |
+|---|---|---|
+| `VISITOR_ALREADY_PRESENT` | La personne a une visite ouverte (`details.visit_id`), souvent saisie sur une autre tablette | « Clôturer la visite précédente » : sortie de `details.visit_id` à l'heure indiquée par l'agent, puis renvoi de l'entrée **avec la même `client_reference`** |
+| `ARCHIVED_REFERENTIEL`, `SERVICE_NOT_FOUND`, `AGENT_NOT_FOUND`, `PURPOSE_NOT_FOUND`, `AGENT_SERVICE_MISMATCH` | Le référentiel a changé pendant la coupure | Rafraîchir les référentiels, faire choisir un autre service, agent ou motif, puis renvoyer |
+| `VISITOR_NOT_FOUND` | `visitor_id` inconnu de l'organisation | Renvoyer avec le bloc `visitor` complet |
+| `TIMESTAMP_IN_FUTURE` | Horloge de la tablette en avance | Corriger l'horloge ; faire confirmer l'heure par l'agent, puis renvoyer |
+| `INVALID_VISIT_INTERVAL` | Sortie antérieure à l'entrée | Faire corriger l'heure de sortie |
+| `VISIT_NOT_FOUND` (sortie) | L'entrée correspondante n'a pas été enregistrée (en erreur, ou référence inconnue) | Traiter d'abord l'entrée, puis renvoyer la sortie |
+| `VISIT_CANCELLED` | La visite a été annulée au dashboard | Abandonner la sortie et en informer l'agent |
+| `CROSS_ORGANIZATION_FORBIDDEN` | Cache resté sur une autre organisation (changement de compte) | Vider le cache, se reconnecter, puis renvoyer |
+| `UNSUPPORTED_IMAGE`, `FILE_TOO_LARGE` (dépôt) | Photo illisible ou trop lourde | Reprendre la photo, ou envoyer la visite sans elle |
+
+Prévoyez un écran **« À synchroniser »** qui liste trois choses : les lignes en
+attente, les lignes à traiter (avec le message du serveur), et l'heure de la
+dernière synchro réussie. C'est par cet écran que l'agent saura que rien n'est
+perdu.
+
+### 15.8 Modèle de données local (recommandation)
+
+Une base SQLite. L'app utilise `sqflite`, sans génération de code, avec deux
+tables : `kv` pour les caches et `outbox` pour la file. Le modèle ci-dessous est
+le modèle logique :
+
+| Table | Contenu | Clé |
+|---|---|---|
+| `cache_services`, `cache_agents`, `cache_purposes` | Dernier instantané, remplacé en bloc | `id` serveur |
+| `cache_meta` | `version` (ETag), `organization_id`, `decalage_horloge`, date de la dernière synchro | — |
+| `cache_presents` | Dernière liste des présents | `visit_id` |
+| `outbox_entrees` | Payload JSON, `checked_in_at`, `etat`, `tentatives`, `derniere_erreur`, `visit_id` serveur | `client_reference` |
+| `outbox_sorties` | `visit_id` **ou** `client_reference`, `checked_out_at`, `etat`, `derniere_erreur` | identifiant local |
+| `outbox_fichiers` | Chemin local, nature (recto, verso, signature), `url` reçue, `etat` | identifiant local |
+
+Les états d'une ligne : `en_attente` → `envoyee` → `synchronisee`, ou
+`a_traiter`. Une ligne `envoyee` dont la réponse n'est jamais arrivée repasse
+`en_attente` au démarrage : l'idempotence couvre ce renvoi.
+
+### 15.9 Sécurité des données sur la tablette
+
+La file d'attente contient des **données personnelles** (identité, photos de
+pièces) :
+
+- gardez la base locale dans le **stockage privé de l'app**, avec
+  `allowBackup="false"`, et les tokens dans `flutter_secure_storage`. Le
+  chiffrement de l'appareil protège déjà ce stockage. Pour ce parc, une base
+  SQLCipher a été **écartée** : sa clé vivrait dans le Keystore, déjà défaillant
+  sur les tablettes Lenovo TB350XU (voir `TokenStorage` dans l'app), et une clé
+  perdue rendrait illisibles des visites pas encore transmises ;
+- supprimez une photo locale dès que sa visite est synchronisée ;
+- **à la déconnexion, si la file n'est pas vide**, bloquez ou avertissez :
+  « 3 visites non synchronisées ». Les visites sont attribuées au compte qui les
+  synchronise. Synchronisez donc avant de changer d'utilisateur ;
+- une tablette sert **une seule organisation** à la fois. Si l'organisation
+  change à la connexion, videz tous les caches, et la file seulement après l'avoir
+  synchronisée.
+
+### 15.10 Limites à connaître
+
+- **La connexion exige le réseau.** Un agent doit s'être connecté au moins une
+  fois en ligne sur la tablette.
+- **Au-delà de 30 jours sans réseau**, le refresh token expire. Il faut alors se
+  reconnecter avant de synchroniser ; la file locale est conservée.
+- **La recherche de visiteurs (`GET /visitors`) n'existe qu'en ligne.** Hors-ligne,
+  scannez la pièce : ML Kit fonctionne sans réseau.
+- **La clôture automatique tourne sur le serveur, pas sur la tablette.** Une
+  visite saisie hors-ligne avant l'heure limite et synchronisée après est
+  clôturée dans les 5 minutes, à l'heure limite. Si l'agent avait saisi la sortie,
+  même synchronisée plus tard, c'est son heure qui l'emporte (§15.6). Pendant la
+  coupure, le cache des présents de la tablette ignore ces clôtures : il est à
+  jour à la synchro suivante. N'implémentez **aucune** clôture automatique côté
+  tablette, ce qui ferait deux sources de vérité.
+
+### 15.11 Scénarios à tester avant livraison
+
+1. Mode avion : 5 entrées et 2 sorties, puis réseau → tout `created` ou `closed`.
+2. Coupure **pendant** l'envoi (réseau coupé juste après le `POST`) → au renvoi,
+   `already_synced` et `already_closed`, sans aucun doublon au dashboard.
+3. Aller-retour de la même personne hors-ligne → deux visites, la première clôturée.
+4. Personne entrée sur la tablette A en ligne, puis saisie sur la tablette B
+   hors-ligne → `VISITOR_ALREADY_PRESENT` et parcours de résolution.
+5. Service archivé au dashboard pendant la coupure → `ARCHIVED_REFERENTIEL`, puis
+   correction.
+6. Horloge de la tablette avancée de 10 minutes → `TIMESTAMP_IN_FUTURE` ; avec le
+   décalage du §15.4 appliqué, l'erreur ne se produit pas.
+7. App tuée pendant la synchro, puis relancée → la file reprend, sans perte.
+8. Token expiré pendant la coupure → refresh automatique, puis envoi.
+9. 250 entrées en attente → deux lots, tout passe.
+10. Changement de compte avec une file non vide → avertissement bloquant.
+
+### 15.12 Checklist hors-ligne
+
+- [ ] File d'attente locale (*outbox*) dans le stockage privé, avec ses états
+- [ ] `client_reference` UUID v4 générée au moment du geste, jamais régénérée
+- [ ] Heures en UTC avec fuseau (`toUtc().toIso8601String()`), corrigées du décalage
+- [ ] `GET /sync/referentiels` avec `If-None-Match`, et remplacement transactionnel du cache
+- [ ] `GET /sync/presents` pour les sorties et le contrôle « déjà présent » hors-ligne
+- [ ] Fichiers dans le dossier documents, déposés avant l'envoi de leur visite
+- [ ] Synchro *single-flight*, délais croissants avec part aléatoire, lots de 200 au maximum
+- [ ] Lecture ligne par ligne : `created`, `already_synced`, `closed`, `already_closed`, `conflict`, `error`
+- [ ] Écran « À synchroniser », et résolution guidée pour chaque `error_code` du §15.7
+- [ ] Déconnexion bloquée ou avertie tant que la file n'est pas vide
+- [ ] Les 10 scénarios du §15.11 passent
+
+---
+
+## 16. Nouvel environnement de production — novembre 2026
+
+Le serveur du pilote a été perdu. Ses données de test ne sont pas reprises.
+L'API est redéployée sur une **base neuve**, et l'app mobile est livrée dans un
+**nouvel APK**.
+
+### Ce qui change pour l'app
+
+| Point | Conséquence | À faire |
+|---|---|---|
+| Nouvelle adresse du serveur | L'ancienne ne répond plus | `baseUrl` injectée au build (`--dart-define=API_BASE_URL=…`), jamais écrite en dur. Une valeur par environnement : recette, production |
+| Nouveaux identifiants (UUID) pour l'organisation, les services, les agents et les motifs | Tout identifiant gardé de l'ancienne base est invalide | Au premier lancement du nouvel APK, **supprimez la base locale** de l'ancienne version. Prévoyez une version de schéma locale pour décider de cette purge |
+| Nouvelles clés de signature | Tout token émis par l'ancien serveur est refusé | Écran de connexion au premier lancement |
+| Comptes recréés | Les identifiants de connexion du pilote sont conservés, les mots de passe sont communiqués à part | — |
+| Historique vide | `GET /visitors` ne retrouve personne au début ; chaque visiteur est scanné à sa première venue | Rien : c'est le parcours normal de scan |
+| Référentiels chargés par l'administration | Services et agents importés depuis le dashboard, motifs communs posés au démarrage | Ne rien coder en dur : tout vient de `GET /sync/referentiels` |
+
+L'organisation pilote est le **Ministère de la Fonction Publique, du Travail et
+de la Réforme du Service public**, code **`MFPTRSP`**. C'est ce code que prend
+`GET /organizations/theme?code=…` pour la charte graphique d'avant connexion.
+Ses 26 services et 272 agents sont chargés depuis l'annuaire du ministère.
+
+Le compte de terrain `agent001` s'affiche désormais « **Poste police** » : il
+désigne le poste de contrôle, pas une personne. L'URL du serveur vous sera
+communiquée avec l'APK de recette.

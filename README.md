@@ -40,6 +40,8 @@ uv run alembic upgrade head
 
 # 4. Données de démonstration (services, agents, motifs, comptes)
 uv run python -m app.seeds
+#    ou, avec l'annuaire réel du ministère (CSV hors dépôt) :
+# uv run python -m app.seeds --annuaire annuaire-mfptrsp.csv
 
 # 5. Lancement
 uv run uvicorn app.main:app --reload
@@ -58,13 +60,17 @@ Créés par `python -m app.seeds`, mot de passe réglé par `SEED_AGENT_PASSWORD
 
 | Identifiant | Rôle | Organisation | Usage |
 |---|---|---|---|
-| `agent001` | `AGENT_CONTROLE` | `MIN-INTERIEUR` | app mobile |
-| `superviseur001` | `SUPERVISEUR` | `MIN-INTERIEUR` | app mobile + statistiques de sa structure |
-| `orgadmin001` | `ORG_ADMIN` | `MIN-INTERIEUR` | dashboard, limité à sa structure |
-| `admin001` | `ADMIN` | — | dashboard, administration de la plateforme |
+| `agent001` (« Poste police ») | `AGENT_CONTROLE` | `MFPTRSP` | app mobile |
+| `superviseur001` | `SUPERVISEUR` | `MFPTRSP` | app mobile + statistiques de sa structure |
+| `orgadmin001` | `ORG_ADMIN` | `MFPTRSP` | dashboard, limité à sa structure |
+| `admin` | `ADMIN` | — | dashboard, administration de la plateforme |
 
-Le seed crée aussi l'organisation `MIN-INTERIEUR`, à laquelle tous les comptes
-sont rattachés sauf `admin001`.
+Le seed crée aussi l'organisation `MFPTRSP` (Ministère de la Fonction Publique, du
+Travail et de la Réforme du Service public), à laquelle tous les comptes sont
+rattachés sauf `admin`.
+
+En production, n'utilisez pas le seed : `app.bootstrap`, puis `app.import_annuaire`
+et `app.create_user` (voir `DEPLOYMENT.md`).
 
 ### Rôles et périmètre
 
@@ -125,10 +131,10 @@ référentiels avec le personnel réel du ministère, à partir de l'export CSV 
 l'annuaire :
 
 ```bash
-uv run python -m app.import_annuaire data/annuaire.csv \
-    --organisation MIN-INTERIEUR --dry-run     # montre le plan
-uv run python -m app.import_annuaire data/annuaire.csv \
-    --organisation MIN-INTERIEUR               # applique
+uv run python -m app.import_annuaire annuaire-mfptrsp.csv \
+    --organisation MFPTRSP --dry-run     # montre le plan
+uv run python -m app.import_annuaire annuaire-mfptrsp.csv \
+    --organisation MFPTRSP               # applique
 ```
 
 `--organisation` désigne la structure qui reçoit l'annuaire : un service

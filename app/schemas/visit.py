@@ -3,9 +3,17 @@ from __future__ import annotations
 import re
 import uuid
 from datetime import date, datetime
-from typing import Literal
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    ConfigDict,
+    EmailStr,
+    Field,
+    field_validator,
+    model_validator,
+)
 
 from app.models.enums import CheckoutOrigin, DocumentType, Sexe, VisitStatus
 from app.schemas.auth import UserRead
@@ -217,6 +225,10 @@ class VisitRead(ORMModel):
     checked_out_at: datetime | None = None
     checkout_origin: CheckoutOrigin | None = None
     client_reference: str | None = None
+    recorded_offline: bool = Field(
+        default=False,
+        description="Entrée saisie sans réseau, transmise par `POST /visits/sync`.",
+    )
     created_at: datetime
     updated_at: datetime
 
@@ -311,22 +323,111 @@ class VisitFilters(BaseModel):
     created_by: uuid.UUID | None = None
 
 
+# --- Synchronisation hors-ligne (ADR-025) -----------------------------------
+
+# Plafond par liste : un lot reste court à traiter et à renvoyer en cas de
+# coupure. Le client découpe sa file au-delà.
+SYNC_MAX_ITEMS = 200
+
+
+class VisitSyncEntry(VisitCreate):
+    """Entrée saisie hors-ligne.
+
+    Deux champs, facultatifs en ligne, deviennent obligatoires ici :
+
+    - `client_reference` : la clé d'idempotence. Sans elle, renvoyer un lot dont
+      la réponse s'est perdue créerait des doublons ;
+    - `checked_in_at`, **avec fuseau** : l'heure du serveur à la synchro serait
+      celle du retour du réseau, pas celle de l'entrée. Une heure sans fuseau
+      serait lue en UTC et décalerait la visite de l'écart du fuseau de la
+      tablette.
+    """
+
+    client_reference: str = Field(min_length=8, max_length=100)
+    checked_in_at: AwareDatetime
+
+
+class VisitSyncCheckout(BaseModel):
+    """Sortie saisie hors-ligne, pour une visite créée en ligne ou hors-ligne.
+
+    La visite est désignée par `visit_id` (connue du serveur) **ou** par la
+    `client_reference` de son entrée — seule référence dont dispose la tablette
+    pour une entrée pas encore synchronisée, éventuellement dans le même lot.
+    """
+
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    visit_id: uuid.UUID | None = None
+    client_reference: str | None = Field(default=None, min_length=8, max_length=100)
+    checked_out_at: AwareDatetime
+
+    @model_validator(mode="after")
+    def _une_seule_designation(self) -> VisitSyncCheckout:
+        if (self.visit_id is None) == (self.client_reference is None):
+            raise ValueError(
+                "Désignez la visite par `visit_id` ou par `client_reference`, pas les deux."
+            )
+        return self
+
+
 class VisitSyncRequest(BaseModel):
-    visits: list[VisitCreate] = Field(min_length=1, max_length=200)
+    visits: list[VisitSyncEntry] = Field(default_factory=list, max_length=SYNC_MAX_ITEMS)
+    checkouts: list[VisitSyncCheckout] = Field(
+        default_factory=list, max_length=SYNC_MAX_ITEMS
+    )
+
+    @model_validator(mode="after")
+    def _lot_non_vide(self) -> VisitSyncRequest:
+        if not self.visits and not self.checkouts:
+            raise ValueError("Le lot est vide : envoyez au moins une entrée ou une sortie.")
+        return self
 
 
 class VisitSyncItemResult(BaseModel):
-    index: int = Field(description="Position de la visite dans le batch envoyé.")
+    index: int = Field(description="Position de l'entrée dans `visits`.")
     client_reference: str | None = None
-    status: Literal["created", "conflict", "error"]
+    status: Literal["created", "already_synced", "conflict", "error"] = Field(
+        description=(
+            "`created` et `already_synced` sont deux succès : la visite existe au "
+            "serveur sous `visit_id`. `conflict` et `error` laissent l'entrée à "
+            "traiter par l'agent ; `details` porte de quoi le faire."
+        )
+    )
     visit_id: uuid.UUID | None = None
     error_code: str | None = None
     message: str | None = None
+    details: dict[str, Any] | list[Any] | None = None
+
+
+class VisitSyncCheckoutResult(BaseModel):
+    index: int = Field(description="Position de la sortie dans `checkouts`.")
+    visit_id: uuid.UUID | None = None
+    client_reference: str | None = None
+    status: Literal["closed", "already_closed", "conflict", "error"] = Field(
+        description=(
+            "`closed` et `already_closed` sont deux succès. `already_closed` : la "
+            "sortie était déjà enregistrée, `checked_out_at` donne celle du serveur."
+        )
+    )
+    checked_out_at: datetime | None = None
+    error_code: str | None = None
+    message: str | None = None
+    details: dict[str, Any] | list[Any] | None = None
 
 
 class VisitSyncResponse(BaseModel):
+    server_time: datetime = Field(
+        description="Heure du serveur : de quoi recaler l'horloge de la tablette."
+    )
     total: int
     created: int
+    already_synced: int = 0
     conflicts: int
     errors: int
     results: list[VisitSyncItemResult]
+    checkout_total: int = 0
+    checkout_closed: int = 0
+    checkout_already_closed: int = 0
+    checkout_conflicts: int = 0
+    checkout_errors: int = 0
+    checkout_results: list[VisitSyncCheckoutResult] = Field(default_factory=list)

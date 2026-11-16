@@ -14,8 +14,10 @@ structure par structure (voir `app/schemas/setting.py`). Un ministère qui ferme
 commande parcourt donc les organisations actives et applique à chacune la sienne,
 à défaut la valeur de plateforme.
 
-À brancher sur un timer systemd — voir DEPLOYMENT.md. Exécution idempotente : une
-seconde exécution le même jour, pour la même organisation, est un no-op tracé.
+À brancher sur un timer systemd — voir DEPLOYMENT.md. Exécution rejouable : elle
+ne clôture que les visites encore ouvertes dont l'heure limite est passée, chacune
+à cette heure-là. Les passages suivants rattrapent les visites synchronisées en
+retard.
 """
 
 from __future__ import annotations

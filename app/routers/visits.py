@@ -124,11 +124,18 @@ async def list_visits(
     summary="Synchronisation batch des visites créées hors-ligne",
 )
 async def sync_visits(
-    payload: VisitSyncRequest, service: VisitServiceDep, current_user: CurrentUser
+    payload: VisitSyncRequest, service: VisitServiceDep, scope: Scope
 ) -> VisitSyncResponse:
-    """Le batch est traité item par item : le résultat individuel de chaque insertion
-    est renvoyé (`created` / `conflict` / `error`), la réponse globale reste 200."""
-    return await service.sync_visits(payload.visits, current_user)
+    """Entrées (`visits`) et sorties (`checkouts`) saisies hors-ligne (ADR-025).
+
+    Les opérations sont rejouées dans l'ordre chronologique, chacune commitée
+    seule ; la réponse est toujours `200`, avec un résultat par opération. Un lot
+    renvoyé après une coupure est rejoué sans doublon : `already_synced` pour une
+    entrée déjà enregistrée, `already_closed` pour une sortie.
+    """
+    return await service.sync_visits(
+        payload, scope.user, organisation=scope.organization_id
+    )
 
 
 @router.get(

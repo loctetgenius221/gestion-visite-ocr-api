@@ -25,6 +25,7 @@ from app.routers import (
     ocr,
     organizations,
     referentiels,
+    sync,
     uploads,
     users,
     visitors,
@@ -143,6 +144,7 @@ def create_app() -> FastAPI:
     application.include_router(referentiels.router, prefix=prefix)
     application.include_router(dashboard.router, prefix=prefix)
     application.include_router(uploads.router, prefix=prefix)
+    application.include_router(sync.router, prefix=prefix)
     # Charte graphique publique — avant le routeur d'administration, dont le
     # chemin `/organizations/{organization_id}` capterait sinon `/theme` et le
     # rejetterait comme un UUID malformé.

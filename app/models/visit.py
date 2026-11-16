@@ -4,7 +4,16 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint, Uuid
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    Uuid,
+    false,
+)
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -112,6 +121,11 @@ class Visit(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # Clé d'idempotence fournie par le client mobile en mode hors-ligne : permet à
     # `POST /visits/sync` de rejouer un batch sans créer de doublon (voir ADR-004).
     client_reference: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
+    # Entrée saisie sans réseau et transmise plus tard par la synchro (ADR-025).
+    # Le poste de contrôle l'affiche : l'heure d'entrée vient de la tablette.
+    recorded_offline: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=false(), nullable=False
+    )
 
     visitor: Mapped[Visitor] = relationship("Visitor", lazy="joined")
     organization: Mapped[Organization] = relationship("Organization", lazy="joined")

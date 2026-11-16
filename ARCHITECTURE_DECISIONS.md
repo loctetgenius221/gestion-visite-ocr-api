@@ -651,6 +651,8 @@ comportement voulu, mais il découle d'une limite préexistante : `POST /visits/
 ne transporte que des **entrées**, jamais les sorties saisies hors-ligne. Tant que
 c'est le cas, un aller-retour dans la même journée hors connexion ne se rejouera pas
 tel quel. À traiter quand la synchro des clôtures sera spécifiée.
+*Levée par l'ADR-025 : la synchro transporte désormais les sorties, rejouées
+dans l'ordre chronologique.*
 
 ### Champs de passage : surcharge plutôt que migration
 
@@ -1211,3 +1213,61 @@ signature qu'il ne contrôle pas encore.
 heure. C'est la fenêtre d'affichage d'un écran ; la raccourcir obligerait les
 clients à relire les visites plus souvent. Le passage à S3 remplacera ce
 mécanisme par les URLs présignées du stockage objet, sans changement côté clients.
+
+---
+
+## ADR-025 — Synchronisation hors-ligne : entrées, sorties, idempotence
+
+**Contexte.** L'app mobile doit fonctionner sans réseau. `POST /visits/sync` ne
+transportait que des entrées : une sortie saisie hors-ligne était impossible, faute
+de `visit_id`, et `PUT /checkout` imposait l'heure du serveur. Un lot renvoyé après
+une coupure remontait en `DUPLICATE_VISIT` sans dire quelle visite existait déjà.
+Rien ne bornait l'heure envoyée par la tablette. Enfin, une entrée sans
+`organization_id` héritait de l'organisation de son service : un `service_id`
+étranger suffisait à écrire dans le registre d'une autre structure, si aucun motif
+propre ne venait la trahir.
+
+**Décision.**
+
+- **Un lot, deux listes.** `visits` (entrées) et `checkouts` (sorties). Une sortie
+  désigne sa visite par `visit_id`, ou par la `client_reference` de son entrée,
+  seule référence dont la tablette dispose avant la synchro.
+- **Rejeu chronologique.** Les opérations sont triées par horodatage, entrées et
+  sorties mêlées, l'entrée d'abord à égalité. Un aller-retour saisi pendant une
+  coupure passe donc en un seul lot. Les résultats restent indexés sur l'ordre
+  d'envoi.
+- **Idempotence par opération.** Une `client_reference` déjà enregistrée répond
+  `already_synced` avec son `visit_id` : c'est un succès, pas un conflit. Une sortie
+  déjà enregistrée répond `already_closed`, avec l'heure retenue par le serveur. Le
+  client peut renvoyer n'importe quel lot sans risque, ce qui est la seule
+  politique de reprise sûre sur un réseau mobile.
+- **Contrat plus strict en synchro qu'en ligne.** `client_reference` (8 à 100
+  caractères) et `checked_in_at` **avec fuseau** sont obligatoires. Une heure naïve
+  serait lue en UTC et décalerait la visite de l'écart du fuseau de la tablette :
+  elle est refusée plutôt qu'interprétée.
+- **Garde-fou d'horloge.** Une heure en avance de plus de 5 minutes sur le serveur
+  est refusée (`TIMESTAMP_IN_FUTURE`), en ligne comme en synchro. Chaque réponse
+  porte `server_time`, ce qui permet au client de recaler son horloge.
+- **Une sortie de l'agent prime sur la clôture automatique.** Si la visite a été
+  clôturée par la tâche quotidienne, l'heure saisie la remplace, l'origine devient
+  `MANUAL`, et la fiche de pièce potentiellement oubliée est résolue : la sortie
+  constatée au poste établit que la pièce a été rendue.
+- **Cloisonnement imposé** : chaque opération est rattachée à l'organisation de
+  l'appelant, comme `POST /visits` (ADR-023).
+- **Préparation du hors-ligne** : `GET /sync/referentiels` sert un instantané
+  complet avec `ETag`, et `GET /sync/presents` les visites ouvertes.
+
+**Pourquoi un instantané plutôt qu'un delta.** Quelques centaines de lignes au
+plus, et l'archivage remplace la suppression : un instantané n'a aucune
+suppression à propager, ni d'horloge de modification à fiabiliser. L'`ETag`
+réduit le cas courant à un `304` sans corps.
+
+**Pourquoi pas une file d'opérations générique** (CRDT, journal d'événements). Le
+domaine ne comporte que deux gestes, et le serveur reste l'arbitre de la présence.
+Un modèle générique aurait déplacé la complexité vers les deux clients sans
+résoudre un cas de plus.
+
+**Conséquences.** Le contrat de `POST /visits/sync` change (champs obligatoires,
+nouveaux statuts). C'est acceptable parce que l'app mobile est reconstruite, et que
+le dashboard n'appelle pas cette route. Une visite est attribuée au compte qui la
+synchronise. L'app doit donc synchroniser avant tout changement d'utilisateur.

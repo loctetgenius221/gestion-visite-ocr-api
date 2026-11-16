@@ -1,6 +1,14 @@
-"""Données de seed pour le développement (spec §9.4).
+"""Données de seed pour le développement et la recette (spec §9.4).
 
-Usage : `python -m app.seeds`
+Usage :
+
+    python -m app.seeds                                   # services et agents fictifs
+    python -m app.seeds --annuaire annuaire-mfptrsp.csv   # annuaire réel du ministère
+
+L'organisation est le Ministère de la Fonction Publique, du Travail et de la
+Réforme du Service public (`ORGANISATION_PILOTE`). Tous les comptes reçoivent le
+même mot de passe, `SEED_AGENT_PASSWORD` : en production, créez-les plutôt un à
+un avec `app.create_user`.
 
 Le script est idempotent : il ne réinsère rien s'il détecte des données existantes,
 et peut donc être relancé sans risque après une migration.
@@ -8,16 +16,21 @@ et peut donc être relancé sans risque après une migration.
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import os
+import sys
+from pathlib import Path
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.bootstrap import MOTIFS_COMMUNS, ORGANISATION_PILOTE
 from app.core.config import settings
 from app.core.database import SessionLocal, dispose_engine
 from app.core.logging import configure_logging, get_logger
 from app.core.security import hash_password
+from app.import_annuaire import ImportError_, importer
 from app.models.enums import UserRole
 from app.models.organization import Organization
 from app.models.referentiel import Agent, Purpose, Service
@@ -48,48 +61,44 @@ def _check_seed_password() -> None:
             f"{MIN_SEED_PASSWORD_LENGTH} caractères pour semer une base de production."
         )
 
-ORGANIZATION: dict[str, str] = {
-    "code": "MIN-INTERIEUR",
-    "nom": "Ministère de l'Intérieur",
-    "localisation": "Dakar, Plateau",
-}
+ORGANIZATION: dict[str, str] = dict(ORGANISATION_PILOTE)
 
+# Jeu **fictif**, utilisé seulement sans `--annuaire` : les services portent les
+# libellés réels du ministère, les agents des noms inventés. L'annuaire réel
+# (données personnelles) ne vit jamais dans le dépôt.
 SERVICES: list[dict[str, str | None]] = [
-    {"code": "DRH", "name": "Direction des Ressources Humaines", "floor": "2e étage"},
-    {"code": "DAF", "name": "Direction Administrative et Financière", "floor": "1er étage"},
-    {"code": "DSI", "name": "Direction des Systèmes d'Information", "floor": "3e étage"},
-    {"code": "CAB", "name": "Cabinet du Ministre", "floor": "4e étage"},
-    {"code": "SG", "name": "Secrétariat Général", "floor": "4e étage"},
+    {"code": "CM", "name": "Cabinet du Ministre", "floor": None},
+    {"code": "SG", "name": "Secrétariat Général", "floor": None},
+    {"code": "DGFP", "name": "Direction Générale de la Fonction Publique", "floor": None},
+    {
+        "code": "DAGE",
+        "name": "Direction de l'Administration Générale et de l'Équipement",
+        "floor": None,
+    },
+    {"code": "DSI", "name": "Direction des Systèmes d'Information", "floor": None},
 ]
 
 # (code du service, nom, fonction, bureau)
 AGENTS: list[tuple[str, str, str, str]] = [
-    ("DRH", "Aminata Diallo", "Directrice des Ressources Humaines", "B201"),
-    ("DRH", "Ousmane Ndiaye", "Chef du service Carrières", "B205"),
-    ("DAF", "Fatou Sarr", "Directrice Administrative et Financière", "B105"),
-    ("DAF", "Cheikh Fall", "Comptable principal", "B108"),
+    ("CM", "Ibrahima Sow", "Chef de Cabinet", "B401"),
+    ("SG", "Ndèye Faye", "Secrétaire Générale", "B405"),
+    ("DGFP", "Aminata Diallo", "Directrice Générale", "B201"),
+    ("DGFP", "Ousmane Ndiaye", "Chef de division", "B205"),
+    ("DAGE", "Fatou Sarr", "Directrice", "B105"),
+    ("DAGE", "Cheikh Fall", "Comptable principal", "B108"),
     ("DSI", "Mamadou Ba", "Directeur des Systèmes d'Information", "B302"),
     ("DSI", "Awa Gueye", "Administratrice réseau", "B304"),
-    ("CAB", "Ibrahima Sow", "Chef de Cabinet", "B401"),
-    ("SG", "Ndèye Faye", "Secrétaire Générale", "B405"),
 ]
 
-PURPOSES: list[str] = [
-    "Rendez-vous professionnel",
-    "Dépôt de dossier",
-    "Retrait de document",
-    "Réunion de travail",
-    "Entretien de recrutement",
-    "Livraison / prestation",
-    "Visite de courtoisie",
-    "Autre",
-]
+PURPOSES: list[str] = MOTIFS_COMMUNS
 
 USERS: list[dict[str, object]] = [
     {
-        "nom": "Moussa Sagna",
+        # Compte partagé du poste de contrôle de l'entrée : il désigne le poste,
+        # pas une personne.
+        "nom": "Poste police",
         "identifiant": "agent001",
-        "poste": "Poste principal",
+        "poste": "Poste de police — entrée",
         "role": UserRole.AGENT_CONTROLE,
     },
     {
@@ -110,7 +119,7 @@ USERS: list[dict[str, object]] = [
         # Compte du dashboard web. Seul rôle habilité sur les routes
         # d'administration : comptes, référentiels en écriture, audit, paramètres.
         "nom": "Administrateur Fp-visites",
-        "identifiant": "admin001",
+        "identifiant": "admin",
         "poste": "Administration",
         "role": UserRole.ADMIN,
     },
@@ -206,12 +215,14 @@ async def _seed_users(session: AsyncSession, organization: Organization) -> None
         )
 
 
-async def seed(session: AsyncSession) -> None:
-    """Insère les référentiels et les comptes de démonstration manquants."""
+async def seed(session: AsyncSession, *, avec_demo: bool = True) -> None:
+    """Insère l'organisation, les motifs, les comptes et — sauf annuaire réel —
+    les services et agents fictifs manquants."""
     _check_seed_password()
     organization = await _seed_organization(session)
-    services = await _seed_services(session, organization)
-    await _seed_agents(session, services)
+    if avec_demo:
+        services = await _seed_services(session, organization)
+        await _seed_agents(session, services)
     await _seed_purposes(session)
     await _seed_users(session, organization)
     await session.commit()
@@ -225,12 +236,40 @@ async def seed(session: AsyncSession) -> None:
     logger.info("Seed terminé", extra=counts)
 
 
-async def main() -> None:
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="python -m app.seeds", description=__doc__)
+    parser.add_argument(
+        "--annuaire",
+        type=Path,
+        default=None,
+        help=(
+            "CSV de l'annuaire réel (voir `app.import_annuaire`). Fourni, il remplace "
+            "les services et agents fictifs."
+        ),
+    )
+    return parser
+
+
+async def main(argv: list[str] | None = None) -> int:
     configure_logging()
-    async with SessionLocal() as session:
-        await seed(session)
-    await dispose_engine()
+    args = _parser().parse_args(argv)
+    try:
+        async with SessionLocal() as session:
+            await seed(session, avec_demo=args.annuaire is None)
+        if args.annuaire is not None:
+            rapport = await importer(args.annuaire, organisation=ORGANIZATION["code"])
+            print(
+                f"Annuaire importé : {len(rapport.services_crees)} service(s) et "
+                f"{rapport.agents_crees} agent(s) créés, "
+                f"{rapport.agents_existants} déjà présents."
+            )
+    except ImportError_ as exc:
+        print(f"Échec de l'import de l'annuaire : {exc}", file=sys.stderr)
+        return 1
+    finally:
+        await dispose_engine()
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    raise SystemExit(asyncio.run(main()))

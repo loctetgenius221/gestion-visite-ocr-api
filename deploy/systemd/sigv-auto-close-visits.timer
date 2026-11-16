@@ -10,8 +10,9 @@
 # à chaque changement, et ne saurait de toute façon pas servir deux structures aux
 # horaires différents.
 #
-# Le coût est nul : la commande sort immédiatement si l'heure d'une organisation
-# n'est pas atteinte, et l'exécution du jour est déjà enregistrée sinon.
+# Le coût est nul : la commande ne touche qu'aux visites ouvertes dont l'heure
+# limite est passée. Passer souvent est aussi ce qui rattrape, dans les cinq
+# minutes, une visite arrivée en retard par la synchro hors-ligne.
 
 [Unit]
 Description=Fp-visites — déclenchement de la clôture automatique des visites

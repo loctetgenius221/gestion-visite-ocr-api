@@ -8,7 +8,7 @@ Ce service est utilisé :
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime, time
+from datetime import UTC, datetime, time, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +20,7 @@ from app.core.errors import (
 )
 from app.core.logging import get_logger
 from app.models.automatic_closure_run import AutomaticClosureRun
+from app.models.base import ensure_utc
 from app.models.enums import CheckoutOrigin, ForgottenDocumentStatus, VisitStatus
 from app.models.forgotten_document import ForgottenDocumentCase
 from app.models.user import User
@@ -39,6 +40,18 @@ from app.services.audit_service import AuditAction, AuditService
 logger = get_logger(__name__)
 
 
+def _derniere_limite(maintenant: datetime, heure: time) -> datetime:
+    """Heure limite la plus récente déjà atteinte : aujourd'hui, ou hier si pas encore."""
+    aujourd_hui = datetime.combine(maintenant.date(), heure, tzinfo=UTC)
+    return aujourd_hui if aujourd_hui <= maintenant else aujourd_hui - timedelta(days=1)
+
+
+def _premiere_limite_apres(entree: datetime, heure: time) -> datetime:
+    """Première heure limite postérieure à l'entrée : celle du jour, ou du lendemain."""
+    meme_jour = datetime.combine(entree.date(), heure, tzinfo=UTC)
+    return meme_jour if entree < meme_jour else meme_jour + timedelta(days=1)
+
+
 class AutoClosureService:
     """Clôture automatique quotidienne et gestion des pièces oubliées."""
 
@@ -56,63 +69,57 @@ class AutoClosureService:
         closure_time_str: str = "17:00",
         organization_id: uuid.UUID | None = None,
         dry_run: bool = False,
+        now: datetime | None = None,
     ) -> dict:
-        """Clôture les visites PRESENT créées avant l'heure limite.
+        """Clôture les visites PRESENT dont l'heure limite est passée.
 
-        Idempotent : une seconde exécution le même jour pour la même organisation
-        est un no-op enregistré.
+        Une visite est due à la **première heure limite qui suit son entrée** :
+        entrée à 10 h, elle l'est à 17 h le jour même ; entrée à 18 h, le
+        lendemain à 17 h. Elle est clôturée **à cette heure-là**, pas à l'heure
+        d'exécution de la tâche.
+
+        La tâche est rejouable à volonté : elle ne touche qu'aux visites encore
+        ouvertes et dues. C'est ce qui permet de rattraper une visite arrivée en
+        retard par la synchro hors-ligne (ADR-025) — saisie à 10 h sans réseau,
+        synchronisée à 18 h, elle est clôturée au passage suivant, à 17 h, au lieu
+        de rester présente jusqu'au lendemain et d'afficher trente heures de visite.
         """
-        today = date.today()
-
-        # Vérifier idempotence
-        existing_run = await self.runs.get_run(organization_id, today)
-        if existing_run is not None:
-            logger.info(
-                "Clôture déjà exécutée pour %s le %s (%d visites clôturées)",
-                organization_id or "global",
-                today,
-                existing_run.closed_visits_count,
-            )
-            return {
-                "status": "already_run",
-                "run_date": today.isoformat(),
-                "closed_visits_count": existing_run.closed_visits_count,
-                "cases_created_count": existing_run.cases_created_count,
-            }
-
-        # Calculer l'heure limite
+        now = ensure_utc(now or datetime.now(UTC))
         hour, minute = map(int, closure_time_str.split(":"))
-        cutoff = datetime.combine(today, time(hour, minute), tzinfo=UTC)
-        now = datetime.now(UTC)
-        if now < cutoff:
-            return {
-                "status": "not_due",
-                "run_date": today.isoformat(),
-                "visits_to_close": 0,
-            }
+        heure_limite = time(hour, minute)
+        limite = _derniere_limite(now, heure_limite)
 
-        # Récupérer les visites PRESENT à clôturer
         stmt = select(Visit).where(
             Visit.statut == VisitStatus.PRESENT,
-            Visit.checked_in_at < cutoff,
+            Visit.checked_in_at < limite,
         )
         if organization_id is not None:
             stmt = stmt.where(Visit.organization_id == organization_id)
 
         visits = list((await self.session.execute(stmt)).scalars().all())
+        run_date = limite.date()
 
         if dry_run:
             return {
                 "status": "dry_run",
-                "run_date": today.isoformat(),
+                "run_date": run_date.isoformat(),
                 "visits_to_close": len(visits),
+            }
+        if not visits:
+            return {
+                "status": "nothing_to_close",
+                "run_date": run_date.isoformat(),
+                "closed_visits_count": 0,
+                "cases_created_count": 0,
             }
 
         cases_created = 0
 
         for visit in visits:
             visit.statut = VisitStatus.SORTI
-            visit.checked_out_at = now
+            visit.checked_out_at = _premiere_limite_apres(
+                ensure_utc(visit.checked_in_at), heure_limite
+            )
             visit.checkout_origin = CheckoutOrigin.AUTOMATIC
 
             # Créer la fiche de pièce oubliée
@@ -133,18 +140,26 @@ class AutoClosureService:
                 entity="forgotten_document_case",
                 entity_id=case.id,
                 actor=None,
+                organization_id=visit.organization_id,
                 metadata={"visit_id": str(visit.id), "status": initial_status.value},
             )
 
-        # Enregistrer l'exécution
-        run = AutomaticClosureRun(
-            organization_id=organization_id,
-            run_date=today,
-            closed_visits_count=len(visits),
-            cases_created_count=cases_created,
-            executed_at=now,
-        )
-        await self.runs.add(run)
+        # Une ligne par organisation et par jour : les passages de rattrapage
+        # cumulent leurs compteurs sur celle de l'heure limite traitée.
+        run = await self.runs.get_run(organization_id, run_date)
+        if run is None:
+            run = AutomaticClosureRun(
+                organization_id=organization_id,
+                run_date=run_date,
+                closed_visits_count=len(visits),
+                cases_created_count=cases_created,
+                executed_at=now,
+            )
+            await self.runs.add(run)
+        else:
+            run.closed_visits_count += len(visits)
+            run.cases_created_count += cases_created
+            run.executed_at = now
 
         # Audit groupé
         await self.audit.record(
@@ -152,8 +167,9 @@ class AutoClosureService:
             entity="automatic_closure_run",
             entity_id=run.id,
             actor=None,
+            organization_id=organization_id,
             metadata={
-                "run_date": today.isoformat(),
+                "run_date": run_date.isoformat(),
                 "organization_id": str(organization_id) if organization_id else None,
                 "closed_visits_count": len(visits),
                 "cases_created_count": cases_created,
@@ -170,7 +186,7 @@ class AutoClosureService:
         )
         return {
             "status": "completed",
-            "run_date": today.isoformat(),
+            "run_date": run_date.isoformat(),
             "closed_visits_count": len(visits),
             "cases_created_count": cases_created,
         }

@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 
 from httpx import AsyncClient
 
 from tests.integration.test_visits import visit_payload
 
 
-def offline_payload(seeded: dict, reference: str, numero: str) -> dict:
+def offline_payload(
+    seeded: dict, reference: str, numero: str, *, il_y_a: timedelta = timedelta(hours=1)
+) -> dict:
     payload = visit_payload(seeded)
     payload["client_reference"] = reference
+    payload["checked_in_at"] = (datetime.now(UTC) - il_y_a).isoformat()
     payload["visitor"]["numero_document"] = numero
     return payload
 
@@ -36,19 +40,22 @@ class TestSync:
         assert all(item["status"] == "created" for item in result["results"])
         assert all(item["visit_id"] for item in result["results"])
 
-    async def test_rejeu_du_meme_batch_est_signale_en_conflit_sans_doublon(
+    async def test_rejeu_du_meme_batch_est_un_succes_sans_doublon(
         self, client: AsyncClient, seeded: dict, auth_headers: dict
     ):
+        """La réponse du premier envoi s'est perdue : le renvoi ne crée rien et
+        rend l'identifiant de la visite déjà enregistrée."""
         body = {"visits": [offline_payload(seeded, "offline-1", "111")]}
-        await client.post("/visits/sync", json=body, headers=auth_headers)
+        premier = await client.post("/visits/sync", json=body, headers=auth_headers)
 
         rejeu = await client.post("/visits/sync", json=body, headers=auth_headers)
 
         assert rejeu.status_code == 200
         result = rejeu.json()
-        assert result["conflicts"] == 1
-        assert result["results"][0]["status"] == "conflict"
-        assert result["results"][0]["error_code"] == "DUPLICATE_VISIT"
+        assert (result["created"], result["already_synced"], result["conflicts"]) == (0, 1, 0)
+        item = result["results"][0]
+        assert item["status"] == "already_synced"
+        assert item["visit_id"] == premier.json()["results"][0]["visit_id"]
 
         listing = await client.get("/visits", headers=auth_headers)
         assert listing.json()["total"] == 1
@@ -79,13 +86,13 @@ class TestSync:
     async def test_index_et_reference_client_sont_renvoyes_pour_le_rapprochement(
         self, client: AsyncClient, seeded: dict, auth_headers: dict
     ):
-        body = {"visits": [offline_payload(seeded, "ref-abc", "111")]}
+        body = {"visits": [offline_payload(seeded, "ref-abc-123", "111")]}
 
         response = await client.post("/visits/sync", json=body, headers=auth_headers)
 
         item = response.json()["results"][0]
         assert item["index"] == 0
-        assert item["client_reference"] == "ref-abc"
+        assert item["client_reference"] == "ref-abc-123"
 
     async def test_batch_vide_est_rejete(
         self, client: AsyncClient, auth_headers: dict, seeded: dict
