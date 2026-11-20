@@ -185,7 +185,7 @@ def _apply_positional_corrections(candidate: MrzCandidate) -> MrzCandidate:
         fix(1, 10, 13, _TO_ALPHA)
         fix(1, 13, 20, _TO_DIGIT)
         fix(1, 21, 28, _TO_DIGIT)
-        fix(1, 43, 44, _TO_DIGIT)
+        fix(1, 42, 44, _TO_DIGIT)  # contrôle du numéro personnel + composite
         fix(0, 2, 5, _TO_ALPHA)
     elif candidate.mrz_format is MrzFormat.TD1:
         # Ligne 1 : [5:14] n° doc | 14 check ; Ligne 2 : [0:6] naissance | 6 check |
@@ -531,6 +531,49 @@ def extract_nin(ocr_lines: list[str], numero_document: str | None = None) -> str
     return None
 
 
+_NIN_STRUCTURE = re.compile(r"^[12][A-Z0-9]{3}[0-9]{9}$")
+
+
+def nin_du_passeport(candidate: MrzCandidate) -> str | None:
+    """Lit le NIN dans le numéro personnel d'un passeport (TD3).
+
+    Contrairement à la CNI, le passeport sénégalais **encode** le NIN dans son MRZ :
+    zone « numéro personnel » de la ligne 2 (positions 29 à 42), libellée
+    « N° personnel / Personal No. » sur la page photo, avec son propre chiffre de
+    contrôle en position 43.
+
+    Le chiffre de contrôle doit se recomposer, et la valeur doit avoir la structure
+    d'un NIN — un passeport étranger porte tout autre chose dans ce champ. Aucune
+    correction de confusion n'est appliquée : la valeur est déjà garantie par le
+    contrôle, la « redresser » fabriquerait une donnée.
+    """
+    if candidate.mrz_format is not MrzFormat.TD3:
+        return None
+    ligne = candidate.lines[1]
+    brut = ligne[28:42]
+    if compute_check_digit(brut) != ligne[42]:
+        return None
+    valeur = brut.replace("<", "")
+    if not _NIN_STRUCTURE.match(valeur):
+        return None
+    if not (_NIN_ANNEE_MIN <= int(valeur[4:8]) <= date.today().year):
+        return None
+    return valeur
+
+
+def _resolve_nin(
+    document_type: DocumentType,
+    candidate: MrzCandidate,
+    raw_lines: list[str],
+    numero_document: str | None,
+) -> str | None:
+    if document_type is DocumentType.CNI:
+        return extract_nin(raw_lines, numero_document)
+    if document_type is DocumentType.PASSEPORT:
+        return nin_du_passeport(candidate) or extract_nin(raw_lines, numero_document)
+    return None
+
+
 def _resolve_document_type(mrz_format: MrzFormat, document_type_code: str) -> DocumentType:
     prefix = (document_type_code or "").strip("<")[:1]
     if prefix in _DOC_TYPE_BY_PREFIX:
@@ -585,15 +628,13 @@ def parse_mrz_lines(raw_lines: list[str]) -> MrzScanResponse:
             nom=_clean_name(fields.surname),
             prenom=_clean_name(fields.name),
             numero_document=numero_document,
-            # Le NIN vient de la zone imprimée lue dans la même passe OCR, jamais du
-            # MRZ qui ne le contient pas (ADR-005). `numero_document` est transmis
-            # comme garde-fou : un fragment du numéro de carte ne doit jamais être
-            # renvoyé comme NIN.
-            nin=(
-                extract_nin(raw_lines, numero_document)
-                if document_type is DocumentType.CNI
-                else None
-            ),
+            # CNI : le NIN vient de la zone imprimée lue dans la même passe OCR,
+            # jamais du MRZ qui ne le contient pas (ADR-005). `numero_document` est
+            # transmis comme garde-fou : un fragment du numéro de carte ne doit
+            # jamais être renvoyé comme NIN.
+            # Passeport : le NIN est dans le MRZ (numéro personnel, contrôlé) ; la
+            # zone imprimée « N° personnel » ne sert qu'en repli.
+            nin=_resolve_nin(document_type, candidate, raw_lines, numero_document),
             nationalite=(fields.nationality or "").replace("<", "") or None,
             date_naissance=_parse_mrz_date(fields.birth_date, is_expiry=False),
             sexe=sexe,

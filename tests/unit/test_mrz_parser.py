@@ -109,6 +109,47 @@ class TestParseTD3:
         assert result.raw_mrz_lines == TD3_LINES
 
 
+class TestNinDuPasseport:
+    """Le passeport sénégalais encode le NIN dans son numéro personnel (TD3).
+
+    Structure relevée sur un passeport réel, valeurs **fictives**.
+    """
+
+    @staticmethod
+    def _passeport(numero_personnel: str) -> list[str]:
+        return str(
+            TD3CodeGenerator(
+                "P", "SEN", "DIOP", "AMINATA", "A01234567", "SEN", "950314", "F",
+                "330101", numero_personnel,
+            )
+        ).splitlines()
+
+    def test_nin_numerique_lu_dans_le_mrz(self):
+        result = parse_mrz_lines(self._passeport("1895200300511"))
+        assert result.mrz_valid is True
+        assert result.fields.nin == "1895200300511"
+
+    def test_nin_alphanumerique_lu_dans_le_mrz(self):
+        result = parse_mrz_lines(self._passeport("2K05201200108"))
+        assert result.fields.nin == "2K05201200108"
+
+    def test_controle_faux_aucun_nin(self):
+        lignes = self._passeport("1895200300511")
+        # Dernier chiffre du NIN altéré : le contrôle du numéro personnel échoue.
+        lignes[1] = lignes[1][:40] + "2" + lignes[1][41:]
+        assert parse_mrz_lines(lignes).fields.nin is None
+
+    def test_numero_personnel_etranger_ignore(self):
+        assert parse_mrz_lines(self._passeport("ZE184226B")).fields.nin is None
+
+    def test_numero_personnel_vide(self):
+        assert parse_mrz_lines(TD3_LINES).fields.nin is None
+
+    def test_repli_sur_la_zone_imprimee(self):
+        lignes = ["N° personnel / Personal No.", "1895200300511", *TD3_LINES]
+        assert parse_mrz_lines(lignes).fields.nin == "1895200300511"
+
+
 class TestParseTD1:
     @pytest.fixture
     def result(self):
