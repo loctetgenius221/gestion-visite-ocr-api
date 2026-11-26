@@ -1,10 +1,16 @@
 # Intégration continue : rien n'est déployé qui n'a pas passé ces deux jobs.
 #
-# - `tests`      : lint et suite complète (SQLite en mémoire, ADR-007) ;
+# - `tests`      : lint, typage et suite complète (SQLite en mémoire, ADR-007) ;
+# - `securite`   : dépendances vulnérables (pip-audit) et secrets dans
+#   l'historique (gitleaks) ;
 # - `migrations` : upgrade, downgrade puis upgrade sur un vrai PostgreSQL 16.
 #   La suite tourne sur SQLite ; c'est ici que se voient les écarts de dialecte
 #   (enums, contraintes, index trigrammes, fusion de données) qui ne
 #   surgiraient sinon qu'en production.
+#
+# Les actions tierces sont épinglées par SHA de commit (audit SEC-010) : une
+# étiquette `v4` peut être déplacée vers un autre code, un SHA non. Le
+# commentaire donne la version, pour les mises à jour.
 
 name: CI
 
@@ -26,9 +32,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
 
@@ -38,8 +44,40 @@ jobs:
       - name: Lint
         run: uv run ruff check app tests
 
+      - name: Typage
+        run: uv run mypy app
+
       - name: Tests
         run: uv run pytest -q -p no:cacheprovider
+
+  securite:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Tout l'historique : un secret retiré du code reste dans les commits.
+          fetch-depth: 0
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
+
+      - name: Dépendances vulnérables (production)
+        run: |
+          uv export --frozen --no-dev --no-hashes --no-emit-project -o requirements-audit.txt
+          uvx pip-audit==2.10.1 -r requirements-audit.txt
+
+      - name: Secrets dans l'historique
+        # Binaire épinglé et vérifié par empreinte. Faux positifs vérifiés :
+        # `.gitleaksignore`.
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+        run: |
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfLO "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  ${archive}" | sha256sum -c -
+          tar -xzf "${archive}" gitleaks
+          ./gitleaks git . --redact --no-banner
 
   migrations:
     runs-on: ubuntu-24.04
@@ -61,9 +99,9 @@ jobs:
       DATABASE_URL: postgresql+asyncpg://sigv:sigv@localhost:5432/sigv
       ENVIRONMENT: ci
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: astral-sh/setup-uv@v5
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           enable-cache: true
 

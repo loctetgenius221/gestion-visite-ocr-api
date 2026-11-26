@@ -1,0 +1,3 @@
+# Faux positifs vérifiés (audit du 26/11/2026). Une ligne par empreinte gitleaks.
+# Mot de passe factice d'un test de la CLI create_user, dans un ancien commit.
+d5ab4680db15a6fe6cd5e90af43886dfa6361dcb:tests/integration/test_create_user_cli.py:generic-api-key:47
