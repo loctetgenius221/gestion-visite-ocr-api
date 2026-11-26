@@ -112,20 +112,28 @@ class AuthService:
         await self.session.commit()
         return pair
 
+    @staticmethod
+    def _creer_jeton_dacces(user: User, session: UserSession) -> str:
+        """Jeton d'accès lié à sa session : la couper le rend aussitôt inutilisable."""
+        access_token, _ = create_access_token(
+            str(user.id),
+            {"role": user.role.value, "identifiant": user.identifiant, "sid": str(session.id)},
+        )
+        return access_token
+
     async def _issue_token_pair(self, user: User) -> TokenPair:
-        claims = {"role": user.role.value, "identifiant": user.identifiant}
-        access_token, _ = create_access_token(str(user.id), claims)
         refresh_token, refresh_payload = create_refresh_token(str(user.id))
 
         # Trace la session : sans elle, impossible de lister les appareils
         # connectés ni de couper l'accès d'une tablette perdue.
-        await self.sessions.open(
+        session = await self.sessions.open(
             user_id=user.id,
             jti=refresh_payload.jti,
             expires_at=refresh_payload.expires_at,
             user_agent=self.context.user_agent,
             ip_address=self.context.ip_address,
         )
+        access_token = self._creer_jeton_dacces(user, session)
 
         return TokenPair(
             access_token=access_token,
@@ -211,9 +219,7 @@ class AuthService:
         if session.user_id != user.id:
             raise InvalidTokenError()
         maintenant = datetime.now(UTC)
-        access_token, _ = create_access_token(
-            str(user.id), {"role": user.role.value, "identifiant": user.identifiant}
-        )
+        access_token = self._creer_jeton_dacces(user, session)
 
         nouveau_refresh = await self._faire_glisser_la_session(
             user, session, payload, maintenant
@@ -285,9 +291,31 @@ class AuthService:
         await self.session.commit()
 
     async def resolve_access_token(self, token: str) -> User:
-        """Résout un access token vers l'utilisateur porteur (dépendance d'authentification)."""
+        """Résout un access token vers l'utilisateur porteur (dépendance d'authentification).
+
+        La session d'origine doit être vivante : déconnexion, révocation d'une
+        tablette ou réinitialisation du mot de passe coupent aussi les jetons
+        d'accès déjà émis, au lieu de les laisser vivre jusqu'à 30 minutes
+        (audit SEC-004). Coût : une lecture par clé primaire par requête.
+        """
         payload = decode_token(token, expected_type="access")
-        return await self._load_active_user(payload.subject)
+        user = await self._load_active_user(payload.subject)
+        await self._exiger_session_vivante(payload, user)
+        return user
+
+    async def _exiger_session_vivante(self, payload: TokenPayload, user: User) -> None:
+        if payload.session_id is None:
+            # Jeton émis avant l'ajout de `sid` : il expire au plus tard
+            # ACCESS_TOKEN_EXPIRE_MINUTES après le déploiement. Le refuser
+            # forcerait un rafraîchissement sans rien protéger de plus.
+            return
+        try:
+            session_id = uuid.UUID(payload.session_id)
+        except ValueError as exc:
+            raise InvalidTokenError() from exc
+        session = await self.sessions.get_by_id(session_id)
+        if session is None or session.revoked_at is not None or session.user_id != user.id:
+            raise InvalidTokenError("Cette session n'est plus active.")
 
     async def _load_active_user(self, subject: str) -> User:
         try:

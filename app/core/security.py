@@ -43,6 +43,9 @@ class TokenPayload:
     token_type: TokenType
     jti: str
     expires_at: datetime
+    # Session (`UserSession.id`) d'où vient un jeton d'accès. Absente des refresh
+    # tokens, qui sont eux-mêmes la clé de leur session.
+    session_id: str | None = None
 
 
 def _create_token(
@@ -155,4 +158,5 @@ def decode_token(token: str, expected_type: TokenType | None = None) -> TokenPay
         token_type=token_type,
         jti=str(jti),
         expires_at=datetime.fromtimestamp(int(exp), tz=UTC),
+        session_id=str(claims["sid"]) if claims.get("sid") else None,
     )

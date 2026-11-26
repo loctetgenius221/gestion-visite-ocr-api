@@ -266,13 +266,14 @@ class TestGardeFousDesEntrees:
         self, client: AsyncClient, seeded: dict, auth_headers: dict
     ):
         futur = (datetime.now(UTC) + timedelta(hours=2)).isoformat()
+        # Construit avant la synchro : la session de test est partagée avec
+        # l'API, et le rollback de l'entrée refusée expire les objets de `seeded`.
+        payload_en_ligne = visit_payload(seeded, checked_in_at=futur)
 
         resultat = await _sync(
             client, auth_headers, visits=[entree(seeded, "REF-FUTUR-01", "FT01", a=futur)]
         )
-        en_ligne = await client.post(
-            "/visits", json=visit_payload(seeded, checked_in_at=futur), headers=auth_headers
-        )
+        en_ligne = await client.post("/visits", json=payload_en_ligne, headers=auth_headers)
 
         assert resultat["results"][0]["error_code"] == "TIMESTAMP_IN_FUTURE"
         assert en_ligne.status_code == 422

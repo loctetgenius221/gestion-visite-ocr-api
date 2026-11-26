@@ -105,10 +105,10 @@ async def test_sec005_compte_verrouille_et_compte_inconnu_repondent_pareil(
     assert existant["error_code"] == inconnu["error_code"]
 
 
-SEC_004 = "SEC-004 : le jeton d'accès survit à la déconnexion et à la révocation de session"
+# SEC-004 : le jeton d'accès survivait à la déconnexion et à la révocation de
+# session. Corrigé par la claim `sid` (non-régression).
 
 
-@pytest.mark.xfail(strict=True, reason=SEC_004)
 async def test_sec004_jeton_dacces_refuse_apres_deconnexion(
     client: AsyncClient, seeded: dict
 ) -> None:
@@ -126,3 +126,40 @@ async def test_sec004_jeton_dacces_refuse_apres_deconnexion(
 
     reponse = await client.get("/visits", headers=entetes)
     assert reponse.status_code == 401
+
+
+async def test_sec004_jeton_dacces_refuse_apres_revocation_par_un_admin(
+    client: AsyncClient, seeded: dict, admin_headers: dict[str, str]
+) -> None:
+    """La tablette perdue : l'admin coupe la session, le jeton en cours tombe."""
+    connexion = await client.post(
+        "/auth/login", json={"identifiant": "agent001", "mot_de_passe": "MotDePasse123!"}
+    )
+    entetes = {"Authorization": f"Bearer {connexion.json()['access_token']}"}
+    utilisateur = connexion.json()["user"]["id"]
+    sessions = await client.get(f"/users/{utilisateur}/sessions", headers=admin_headers)
+    assert sessions.status_code == 200, sessions.text
+    for session in sessions.json():
+        coupure = await client.delete(
+            f"/users/{utilisateur}/sessions/{session['id']}", headers=admin_headers
+        )
+        assert coupure.status_code in (200, 204), coupure.text
+
+    assert (await client.get("/visits", headers=entetes)).status_code == 401
+
+
+async def test_sec004_le_jeton_dacces_reste_valide_apres_un_rafraichissement(
+    client: AsyncClient, seeded: dict
+) -> None:
+    connexion = (
+        await client.post(
+            "/auth/login", json={"identifiant": "agent001", "mot_de_passe": "MotDePasse123!"}
+        )
+    ).json()
+    rafraichi = await client.post(
+        "/auth/refresh", json={"refresh_token": connexion["refresh_token"]}
+    )
+    assert rafraichi.status_code == 200, rafraichi.text
+    for jeton in (connexion["access_token"], rafraichi.json()["access_token"]):
+        reponse = await client.get("/visits", headers={"Authorization": f"Bearer {jeton}"})
+        assert reponse.status_code == 200, reponse.text
