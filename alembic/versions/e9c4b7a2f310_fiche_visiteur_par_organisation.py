@@ -151,12 +151,16 @@ def upgrade() -> None:
         )
 
 
-# Fiche conservée pour une même pièce : la plus ancienne (c6e8a2d47f19).
+# Fiche conservée pour une même pièce : celle de la première visite, comme à
+# l'upgrade. `created_at` ne départage pas : une copie hérite de celui de
+# l'original. Les fiches sans visite passent en dernier, sur les deux moteurs.
 _FICHE_CANONIQUE = (
-    "SELECT k.id FROM visitors k "
+    "SELECT k.id FROM visitors k LEFT JOIN visits vv ON vv.visitor_id = k.id "
     "WHERE k.type_document = {alias}.type_document "
     "AND k.numero_document = {alias}.numero_document "
-    "ORDER BY k.created_at, k.id LIMIT 1"
+    "GROUP BY k.id, k.created_at "
+    "ORDER BY CASE WHEN MIN(vv.checked_in_at) IS NULL THEN 1 ELSE 0 END, "
+    "MIN(vv.checked_in_at), k.created_at, k.id LIMIT 1"
 )
 
 
@@ -164,22 +168,25 @@ def downgrade() -> None:
     with op.batch_alter_table("visitors") as batch:
         batch.drop_constraint(_NOUVELLE_UNICITE, type_="unique")
 
-    for table in ("visits", "forgotten_document_cases"):
-        op.execute(
-            sa.text(
-                f"UPDATE {table} SET visitor_id = ("
-                "SELECT k.id FROM visitors k JOIN visitors d "
-                "ON k.type_document = d.type_document "
-                "AND k.numero_document = d.numero_document "
-                f"WHERE d.id = {table}.visitor_id "
-                "ORDER BY k.created_at, k.id LIMIT 1)"
-            )
-        )
-    op.execute(
+    # Fiche canonique de chaque fiche, calculée une fois **avant** de rattacher :
+    # le rattachement change les visites, donc le classement.
+    bind = op.get_bind()
+    canoniques = bind.execute(
         sa.text(
-            "DELETE FROM visitors WHERE id <> (" + _FICHE_CANONIQUE.format(alias="visitors") + ")"
+            "SELECT d.id, (" + _FICHE_CANONIQUE.format(alias="d") + ") FROM visitors d"
         )
-    )
+    ).all()
+    for fiche, canonique in canoniques:
+        if fiche == canonique:
+            continue
+        for table in ("visits", "forgotten_document_cases"):
+            bind.execute(
+                sa.text(f"UPDATE {table} SET visitor_id = :canonique WHERE visitor_id = :fiche"),
+                {"canonique": canonique, "fiche": fiche},
+            )
+    for fiche, canonique in canoniques:
+        if fiche != canonique:
+            bind.execute(sa.text("DELETE FROM visitors WHERE id = :id"), {"id": fiche})
 
     with op.batch_alter_table("visitors") as batch:
         batch.drop_constraint(
