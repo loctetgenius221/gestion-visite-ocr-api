@@ -7,6 +7,7 @@ from typing import Any
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.errors import (
     AgentNotFoundError,
     AppError,
@@ -136,6 +137,7 @@ class VisitService:
         """
         if payload.checked_in_at is not None:
             self._refuser_horodatage_futur(payload.checked_in_at, "checked_in_at")
+            self._refuser_horodatage_trop_ancien(payload.checked_in_at)
         service = await self.services.get_by_id(payload.service_id)
         if service is None:
             raise ServiceNotFoundError(details={"service_id": str(payload.service_id)})
@@ -979,6 +981,30 @@ class VisitService:
                     "valeur": moment,
                     "heure_serveur": maintenant,
                     "tolerance_secondes": int(TOLERANCE_HORLOGE.total_seconds()),
+                },
+            )
+
+    @staticmethod
+    def _refuser_horodatage_trop_ancien(moment: datetime) -> None:
+        """Refuse une entrée antérieure à `VISIT_MAX_BACKDATE_DAYS` (audit SEC-009).
+
+        Sans borne, un agent inscrivait une visite à n'importe quelle date passée,
+        l'an dernier par exemple, sans que rien ne la distingue d'un passage réel.
+        La limite couvre la plus longue coupure réseau prévue ; une date plus
+        ancienne se corrige par l'administration des visites, qui la trace.
+        """
+        maintenant = datetime.now(UTC)
+        limite = maintenant - timedelta(days=settings.VISIT_MAX_BACKDATE_DAYS)
+        if ensure_utc(moment) < limite:
+            raise UnprocessableError(
+                "L'heure d'entrée est trop ancienne : faites corriger la visite par un "
+                "administrateur.",
+                error_code="TIMESTAMP_TOO_OLD",
+                details={
+                    "champ": "checked_in_at",
+                    "valeur": moment,
+                    "heure_serveur": maintenant,
+                    "max_jours": settings.VISIT_MAX_BACKDATE_DAYS,
                 },
             )
 

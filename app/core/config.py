@@ -137,6 +137,13 @@ class Settings(BaseSettings):
     # tiennent chacun plusieurs copies de l'image en mémoire.
     OCR_MAX_CONCURRENCY: int = 2
 
+    # --- Registre ---
+    # Ancienneté maximale d'une heure d'entrée envoyée par un poste (en ligne ou
+    # en synchro). Couvre une tablette restée hors ligne une semaine ; au-delà,
+    # une visite antidatée relève de la correction par un administrateur, tracée
+    # comme telle (audit SEC-009).
+    VISIT_MAX_BACKDATE_DAYS: int = 7
+
     @field_validator("ENABLE_DOCS", "SERVE_STORAGE", mode="before")
     @classmethod
     def _blank_means_auto(cls, value: object) -> object:

@@ -195,3 +195,30 @@ async def test_sec004_le_jeton_dacces_reste_valide_apres_un_rafraichissement(
     for jeton in (connexion["access_token"], rafraichi.json()["access_token"]):
         reponse = await client.get("/visits", headers={"Authorization": f"Bearer {jeton}"})
         assert reponse.status_code == 200, reponse.text
+
+
+async def test_sec009_une_visite_ne_sinscrit_pas_lan_dernier(
+    client: AsyncClient, seeded: dict, auth_headers: dict[str, str]
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    payload = _visite_par_saisie(str(seeded["service"].id), "OLD0000001")
+    payload["checked_in_at"] = (datetime.now(UTC) - timedelta(days=365)).isoformat()
+
+    reponse = await client.post("/visits", json=payload, headers=auth_headers)
+
+    assert reponse.status_code == 422, reponse.text
+    assert reponse.json()["error_code"] == "TIMESTAMP_TOO_OLD"
+
+
+async def test_sec009_une_tablette_hors_ligne_quelques_jours_se_synchronise(
+    client: AsyncClient, seeded: dict, auth_headers: dict[str, str]
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    payload = _visite_par_saisie(str(seeded["service"].id), "OLD0000002")
+    payload["checked_in_at"] = (datetime.now(UTC) - timedelta(days=3)).isoformat()
+
+    reponse = await client.post("/visits", json=payload, headers=auth_headers)
+
+    assert reponse.status_code == 201, reponse.text
