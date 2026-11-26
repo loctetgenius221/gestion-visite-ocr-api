@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from app.core.recherche import ECHAPPEMENT, motif_contient
 from app.models.automatic_closure_run import AutomaticClosureRun
 from app.models.forgotten_document import ForgottenDocumentCase
 from app.models.visitor import Visitor
@@ -75,11 +76,11 @@ class ForgottenDocumentRepository:
         if filters.date_to is not None:
             stmt = stmt.where(ForgottenDocumentCase.created_at <= filters.date_to)
         if filters.search:
-            pattern = f"%{filters.search}%"
+            pattern = motif_contient(filters.search)
             stmt = stmt.join(ForgottenDocumentCase.visitor).where(
-                Visitor.nom.ilike(pattern)
-                | Visitor.prenom.ilike(pattern)
-                | Visitor.numero_document.ilike(pattern)
+                Visitor.nom.ilike(pattern, escape=ECHAPPEMENT)
+                | Visitor.prenom.ilike(pattern, escape=ECHAPPEMENT)
+                | Visitor.numero_document.ilike(pattern, escape=ECHAPPEMENT)
             )
         return stmt
 

@@ -115,6 +115,11 @@ Content-Type: application/json
 Durées de vie par défaut : access token **30 minutes**, refresh token **30 jours**, prolongé
 tant que l'appareil sert (le nouveau refresh token arrive alors dans la réponse).
 
+L'access token est lié à sa session. Une déconnexion, la révocation de l'appareil
+au dashboard ou la réinitialisation du mot de passe le rendent **aussitôt**
+invalide (`401 INVALID_TOKEN`), sans attendre ses 30 minutes. Le rafraîchissement
+échoue alors aussi : le client doit revenir à l'écran de connexion.
+
 `POST /api/v1/auth/forgot-password` (`{ "identifiant": "…" }`) existe mais **n'envoie
 encore rien** : elle répond toujours `202` avec un message neutre, faute de
 fournisseur mail ou SMS. N'affichez pas « un e-mail vous a été envoyé » ; un
@@ -562,6 +567,12 @@ signée (§14.1) : gardez-la entière.
 
 Même principe que `/uploads/signature` : on dépose, on récupère l'`url`, on la
 reporte dans le payload de création de visite.
+
+Le serveur décode puis **réencode** chaque image déposée : JPEG pour les photos
+de pièce (HEIC compris), PNG pour les signatures. L'extension de l'`url` peut donc
+différer de celle du fichier envoyé. L'EXIF, dont la position GPS, est retiré.
+Un fichier qui n'est pas une image répond `UNSUPPORTED_IMAGE`, et une image de
+plus de `MAX_IMAGE_MEGAPIXELS` (50 Mpx) répond `FILE_TOO_LARGE`.
 
 ### 5.2 Reporter les URLs
 
@@ -1699,7 +1710,7 @@ Pour que la liste soit complète. Ces codes existaient avant ces évolutions.
 | Code | HTTP | Quand | Conduite à tenir |
 |---|---|---|---|
 | `INVALID_CREDENTIALS` | 401 | Identifiant ou mot de passe faux | Message générique, sans dire lequel |
-| `LOCKED_ACCOUNT` | 401 | Trop d'échecs de connexion | Indiquer d'attendre ou de contacter un administrateur (`POST /users/{id}/unlock`) |
+| `LOCKED_ACCOUNT` | 401 | Trop d'échecs de connexion. Renvoyé **seulement avec le bon mot de passe** ; sinon `INVALID_CREDENTIALS` | Indiquer d'attendre ou de contacter un administrateur (`POST /users/{id}/unlock`) |
 | `INVALID_TOKEN` / `UNAUTHORIZED` | 401 | Token absent, expiré ou révoqué | Tenter `/auth/refresh` une fois, sinon écran de connexion |
 | `INACTIVE_USER` | 403 | Compte désactivé | Écran de connexion, contacter un administrateur |
 | `NOT_FOUND`, `SERVICE_NOT_FOUND`, `AGENT_NOT_FOUND`, `PURPOSE_NOT_FOUND`, `USER_NOT_FOUND`, `SESSION_NOT_FOUND` | 404 | Identifiant inconnu | Rafraîchir la liste |
@@ -1711,6 +1722,7 @@ Pour que la liste soit complète. Ces codes existaient avant ces évolutions.
 | `EXPORT_TOO_LARGE` | 422 | Export au-delà de `visits_export_max_rows` | Inviter à resserrer les dates |
 | `INVALID_VISIT_INTERVAL` | 422 | Sortie antérieure à l'entrée (correction ou synchro) | Faire corriger l'heure |
 | `TIMESTAMP_IN_FUTURE` | 422 | Heure d'entrée ou de sortie en avance de plus de 5 min sur le serveur | Recaler l'horloge de l'appareil (§15.4) |
+| `TIMESTAMP_TOO_OLD` | 422 | Heure d'entrée plus ancienne que `VISIT_MAX_BACKDATE_DAYS` (7 jours par défaut) | Faire corriger la visite par un administrateur au dashboard |
 | `UNPROCESSABLE_ENTITY` | 422 | Autre règle métier non respectée | Afficher `message` |
 | `EXPORT_FORMAT_UNAVAILABLE` | 501 | `GET /visits/export?format=pdf` | Ne proposer que le CSV |
 | `INTERNAL_ERROR` | 500 | Erreur inattendue | Message générique ; l'en-tête `X-Request-ID` permet de retrouver la trace côté serveur |
@@ -2081,6 +2093,7 @@ fiche de pièce potentiellement oubliée qui avait été ouverte est résolue.
 | `ARCHIVED_REFERENTIEL`, `SERVICE_NOT_FOUND`, `AGENT_NOT_FOUND`, `PURPOSE_NOT_FOUND`, `AGENT_SERVICE_MISMATCH` | Le référentiel a changé pendant la coupure | Rafraîchir les référentiels, faire choisir un autre service, agent ou motif, puis renvoyer |
 | `VISITOR_NOT_FOUND` | `visitor_id` inconnu de l'organisation | Renvoyer avec le bloc `visitor` complet |
 | `TIMESTAMP_IN_FUTURE` | Horloge de la tablette en avance | Corriger l'horloge ; faire confirmer l'heure par l'agent, puis renvoyer |
+| `TIMESTAMP_TOO_OLD` | Entrée de plus de 7 jours (tablette restée longtemps hors ligne) | Ne pas renvoyer : signaler l'entrée à un administrateur, qui la saisit au dashboard |
 | `INVALID_VISIT_INTERVAL` | Sortie antérieure à l'entrée | Faire corriger l'heure de sortie |
 | `VISIT_NOT_FOUND` (sortie) | L'entrée correspondante n'a pas été enregistrée (en erreur, ou référence inconnue) | Traiter d'abord l'entrée, puis renvoyer la sortie |
 | `VISIT_CANCELLED` | La visite a été annulée au dashboard | Abandonner la sortie et en informer l'agent |

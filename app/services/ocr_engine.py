@@ -78,7 +78,8 @@ class PaddleOcrEngine:
     def read_lines(self, image: np.ndarray) -> list[str]:
         """Retourne les textes détectés, ordonnés de haut en bas."""
         self.load()
-        assert self._ocr is not None
+        if self._ocr is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : self._ocr est None.")
         raw = self._ocr.predict(to_bgr(image))
         return _extract_lines(raw)
 

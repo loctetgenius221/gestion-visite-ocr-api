@@ -40,3 +40,7 @@ htmlcov/
 
 # Modèles PaddleOCR téléchargés
 .paddleocr/
+
+# Sorties brutes de gitleaks : elles contiennent les valeurs détectées en clair
+# (dont celles du `.env` local). Le rapport d'audit en donne la synthèse masquée.
+audit/raw/gitleaks-*.json

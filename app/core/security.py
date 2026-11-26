@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import bcrypt
-from jose import ExpiredSignatureError, JWTError, jwt
+import jwt
 
 from app.core.config import settings
 from app.core.errors import InvalidTokenError
@@ -25,7 +25,7 @@ def hash_password(password: str) -> str:
     incompatible avec bcrypt >= 4.1 (détection de backend cassée). Voir ADR-003.
     """
     payload = password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
-    return bcrypt.hashpw(payload, bcrypt.gensalt()).decode("utf-8")
+    return bcrypt.hashpw(payload, bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)).decode("utf-8")
 
 
 def verify_password(password: str, hashed: str) -> bool:
@@ -43,6 +43,9 @@ class TokenPayload:
     token_type: TokenType
     jti: str
     expires_at: datetime
+    # Session (`UserSession.id`) d'où vient un jeton d'accès. Absente des refresh
+    # tokens, qui sont eux-mêmes la clé de leur session.
+    session_id: str | None = None
 
 
 def _create_token(
@@ -102,15 +105,22 @@ def _decode_claims(token: str) -> dict[str, Any]:
     if settings.JWT_SECRET_KEY_PREVIOUS:
         cles.append(settings.JWT_SECRET_KEY_PREVIOUS)
 
-    derniere_erreur: JWTError | None = None
+    derniere_erreur: jwt.PyJWTError | None = None
     for cle in cles:
         try:
-            return jwt.decode(token, cle, algorithms=[settings.JWT_ALGORITHM])
-        except ExpiredSignatureError as exc:
+            # La liste d'algorithmes est fixée par la configuration, jamais lue
+            # dans l'en-tête du jeton : `none` et la confusion HS/RS sont exclus.
+            return jwt.decode(
+                token,
+                cle,
+                algorithms=[settings.JWT_ALGORITHM],
+                options={"require": ["exp", "sub", "jti", "type"]},
+            )
+        except jwt.ExpiredSignatureError as exc:
             # Signature reconnue mais jeton expiré : essayer l'autre clé ne
             # changerait rien.
             raise InvalidTokenError() from exc
-        except JWTError as exc:
+        except jwt.PyJWTError as exc:
             derniere_erreur = exc
     raise InvalidTokenError() from derniere_erreur
 
@@ -148,4 +158,5 @@ def decode_token(token: str, expected_type: TokenType | None = None) -> TokenPay
         token_type=token_type,
         jti=str(jti),
         expires_at=datetime.fromtimestamp(int(exp), tz=UTC),
+        session_id=str(claims["sid"]) if claims.get("sid") else None,
     )

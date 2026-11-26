@@ -1,0 +1,22 @@
+app\services\image_preprocessing.py:192: error: No overload variant of "erode" matches argument types "ndarray[Any, dtype[integer[Any] | floating[Any]]]", "None", "int"  [call-overload]
+app\services\image_preprocessing.py:192: note: Possible overload variants:
+app\services\image_preprocessing.py:192: note:     def erode(src: Mat | ndarray[Any, dtype[integer[Any] | floating[Any]]], kernel: Mat | ndarray[Any, dtype[integer[Any] | floating[Any]]], dst: Mat | ndarray[Any, dtype[integer[Any] | floating[Any]]] | None = ..., anchor: Sequence[int] = ..., iterations: int = ..., borderType: int = ..., borderValue: Sequence[float] = ...) -> Mat | ndarray[Any, dtype[integer[Any] | floating[Any]]]
+app\services\image_preprocessing.py:192: note:     def erode(src: UMat, kernel: UMat, dst: UMat | None = ..., anchor: Sequence[int] = ..., iterations: int = ..., borderType: int = ..., borderValue: Sequence[float] = ...) -> UMat
+app\repositories\user_repository.py:126: error: "Result[Any]" has no attribute "rowcount"  [attr-defined]
+app\repositories\user_repository.py:251: error: "Result[Any]" has no attribute "rowcount"  [attr-defined]
+app\services\visit_service.py:870: error: Argument 1 to "VisitSyncCheckoutResult" has incompatible type "**dict[str, object]"; expected "int"  [arg-type]
+app\services\visit_service.py:870: error: Argument 1 to "VisitSyncCheckoutResult" has incompatible type "**dict[str, object]"; expected "UUID | None"  [arg-type]
+app\services\visit_service.py:870: error: Argument 1 to "VisitSyncCheckoutResult" has incompatible type "**dict[str, object]"; expected "str | None"  [arg-type]
+app\services\visit_service.py:870: error: Argument 1 to "VisitSyncCheckoutResult" has incompatible type "**dict[str, object]"; expected "dict[str, Any] | list[Any] | None"  [arg-type]
+app\services\visit_service.py:870: note: "dict" is invariant -- see https://mypy.readthedocs.io/en/stable/common_issues.html#variance
+app\services\visit_service.py:870: note: Consider using "Mapping" instead, which is covariant in the value type
+app\services\visit_service.py:905: error: Argument 1 to "VisitSyncCheckoutResult" has incompatible type "**dict[str, object]"; expected "int"  [arg-type]
+app\services\visit_service.py:905: error: Argument 1 to "VisitSyncCheckoutResult" has incompatible type "**dict[str, object]"; expected "UUID | None"  [arg-type]
+app\services\visit_service.py:905: error: Argument 1 to "VisitSyncCheckoutResult" has incompatible type "**dict[str, object]"; expected "str | None"  [arg-type]
+app\routers\sync.py:109: error: "object" has no attribute "model_dump"  [attr-defined]
+app\routers\sync.py:121: error: Argument 3 to "ReferentielsHorsLigne" has incompatible type "**dict[str, object]"; expected "OrganizationThemeRead"  [arg-type]
+app\routers\sync.py:121: error: Argument 3 to "ReferentielsHorsLigne" has incompatible type "**dict[str, object]"; expected "list[ServiceRead]"  [arg-type]
+app\routers\sync.py:121: error: Argument 3 to "ReferentielsHorsLigne" has incompatible type "**dict[str, object]"; expected "list[AgentRead]"  [arg-type]
+app\routers\sync.py:121: error: Argument 3 to "ReferentielsHorsLigne" has incompatible type "**dict[str, object]"; expected "list[PurposeRead]"  [arg-type]
+app\routers\sync.py:121: error: Argument 3 to "ReferentielsHorsLigne" has incompatible type "**dict[str, object]"; expected "ParametresHorsLigne"  [arg-type]
+Found 16 errors in 4 files (checked 90 source files)

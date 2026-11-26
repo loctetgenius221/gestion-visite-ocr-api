@@ -12,6 +12,7 @@ import uuid
 
 import anyio
 
+from app.core.config import settings
 from app.core.errors import MrzNotDetectedError, MrzParsingError
 from app.core.logging import get_logger
 from app.core.storage_urls import dossier_organisation
@@ -19,9 +20,28 @@ from app.schemas.ocr import MrzScanResponse
 from app.services.image_preprocessing import preprocess_candidates
 from app.services.mrz_parser import parse_mrz_lines
 from app.services.ocr_engine import OcrEngine, get_ocr_engine
-from app.services.storage_service import StorageService, validate_image_upload
+from app.services.storage_service import (
+    StorageService,
+    inspecter_image,
+    normaliser_photo,
+    validate_image_upload,
+)
 
 logger = get_logger(__name__)
+
+_limiteur: anyio.CapacityLimiter | None = None
+
+
+def _limiteur_ocr() -> anyio.CapacityLimiter:
+    """Borne les scans simultanés d'un worker (audit SEC-008).
+
+    Créé à la première utilisation : un `CapacityLimiter` se rattache à la
+    boucle asyncio qui tourne.
+    """
+    global _limiteur
+    if _limiteur is None:
+        _limiteur = anyio.CapacityLimiter(settings.OCR_MAX_CONCURRENCY)
+    return _limiteur
 
 
 class MrzOcrService:
@@ -46,12 +66,16 @@ class MrzOcrService:
         Lève `MrzNotDetectedError` (422) si aucune bande MRZ exploitable n'est trouvée.
         Un échec de checksum ne lève pas : la réponse porte `mrz_valid=false`.
         """
-        extension = validate_image_upload(filename, content)
+        validate_image_upload(filename, content)
+        # Format réel et nombre de pixels contrôlés avant tout décodage (SEC-008).
+        inspecter_image(content)
         started = time.perf_counter()
 
         # Preprocessing + OCR sont bloquants (CPU) : on les sort de la boucle asyncio
         # pour ne pas geler l'event loop pendant le traitement.
-        response = await anyio.to_thread.run_sync(self._run_blocking_pipeline, content)
+        response = await anyio.to_thread.run_sync(
+            self._run_blocking_pipeline, content, limiter=_limiteur_ocr()
+        )
 
         if response is None:
             # On ne logue jamais l'image ni son contenu (RGPD).
@@ -59,6 +83,10 @@ class MrzOcrService:
             raise MrzNotDetectedError()
 
         if persist_image and self._storage is not None:
+            # La photo conservée est réencodée, sans EXIF ni GPS (SEC-007).
+            content, extension = await anyio.to_thread.run_sync(
+                normaliser_photo, content, "JPEG"
+            )
             response.mrz_image_url = await self._storage.save(
                 content,
                 folder=f"{dossier_organisation(organization_id)}/mrz",

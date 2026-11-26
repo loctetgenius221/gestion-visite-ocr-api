@@ -249,5 +249,6 @@ class AutoClosureService:
         await self.session.commit()
 
         refreshed = await self.docs.get_by_id(case.id)
-        assert refreshed is not None
+        if refreshed is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : refreshed est None.")
         return refreshed

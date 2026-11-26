@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Header, Response, status
 
@@ -89,7 +89,7 @@ async def referentiels_hors_ligne(
     agents = await AgentRepository(session).list_all(organization_id=organisation_id)
     motifs = await PurposeRepository(session).list_all(organization_id=organisation_id)
 
-    contenu = {
+    contenu: dict[str, Any] = {
         "organization": OrganizationThemeRead.model_validate(organisation),
         "services": [ServiceRead.model_validate(s) for s in services],
         "agents": [AgentRead.model_validate(a) for a in agents],

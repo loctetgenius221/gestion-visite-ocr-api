@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from typing import Annotated, Literal
 
+import anyio
 from fastapi import APIRouter, File, Query, UploadFile, status
 
 from app.core.deps import CurrentUser, StorageDep
 from app.core.routing import StrictQueryParamsRoute
 from app.core.storage_urls import dossier_organisation
 from app.schemas.upload import UploadResponse
-from app.services.storage_service import validate_image_upload
+from app.services.storage_service import normaliser_photo, validate_image_upload
 
 router = APIRouter(prefix="/uploads", tags=["Fichiers"], route_class=StrictQueryParamsRoute)
 
@@ -36,7 +37,9 @@ async def upload_signature(
     donc le même chemin de migration vers S3.
     """
     content = await signature.read()
-    extension = validate_image_upload(signature.filename, content)
+    validate_image_upload(signature.filename, content)
+    # Contenu vérifié et réencodé, métadonnées retirées (audit SEC-007).
+    content, extension = await anyio.to_thread.run_sync(normaliser_photo, content, "PNG")
     dossier = f"{dossier_organisation(current_user.organization_id)}/signatures"
     url = await storage.save(content, folder=dossier, extension=extension)
     return UploadResponse(url=url)
@@ -67,7 +70,9 @@ async def upload_document(
     pouvoir exporter ou supprimer les fichiers d'un client.
     """
     content = await document.read()
-    extension = validate_image_upload(document.filename, content)
+    validate_image_upload(document.filename, content)
+    # Contenu vérifié et réencodé en JPEG, EXIF (dont GPS) retiré (audit SEC-007).
+    content, extension = await anyio.to_thread.run_sync(normaliser_photo, content, "JPEG")
     dossier = f"{dossier_organisation(current_user.organization_id)}/documents/{face}"
     url = await storage.save(content, folder=dossier, extension=extension)
     return UploadResponse(url=url)

@@ -22,7 +22,7 @@ chemin principal, ce qui n'est plus le cas.
 ## Stack
 
 FastAPI (Python 3.12) · SQLAlchemy 2.0 async + Alembic · PostgreSQL 16 · Pydantic v2 ·
-OpenCV + PaddleOCR + `mrz` · JWT (`python-jose`) · pytest
+OpenCV + PaddleOCR + `mrz` · JWT (`PyJWT`) · pytest
 
 ---
 

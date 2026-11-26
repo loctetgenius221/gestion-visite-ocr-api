@@ -1,0 +1,1026 @@
+UP035 [*] Import from `collections.abc` instead: `Sequence`
+  --> alembic\versions\5f1c5bd2957b_ajout_du_champ_nin_sur_visitor.py:12:1
+   |
+11 | """
+12 | from typing import Sequence, Union
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+13 |
+14 | from alembic import op
+   |
+help: Import from `collections.abc`
+   |
+11 | """
+   - from typing import Sequence, Union
+12 + from typing import Union
+13 + from collections.abc import Sequence
+14 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> alembic\versions\5f1c5bd2957b_ajout_du_champ_nin_sur_visitor.py:12:1
+   |
+11 |   """
+12 | / from typing import Sequence, Union
+13 | |
+14 | | from alembic import op
+15 | | import sqlalchemy as sa
+   | |_______________________^
+   |
+help: Organize imports
+   |
+13 |
+   - from alembic import op
+14 | import sqlalchemy as sa
+15 |
+16 + from alembic import op
+17 |
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\5f1c5bd2957b_ajout_du_champ_nin_sur_visitor.py:20:16
+   |
+18 | # revision identifiers, used by Alembic.
+19 | revision: str = '5f1c5bd2957b'
+20 | down_revision: Union[str, Sequence[str], None] = 'e7bf70c4d387'
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+21 | branch_labels: Union[str, Sequence[str], None] = None
+22 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+19 | revision: str = '5f1c5bd2957b'
+   - down_revision: Union[str, Sequence[str], None] = 'e7bf70c4d387'
+20 + down_revision: str | Sequence[str] | None = 'e7bf70c4d387'
+21 | branch_labels: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\5f1c5bd2957b_ajout_du_champ_nin_sur_visitor.py:21:16
+   |
+19 | revision: str = '5f1c5bd2957b'
+20 | down_revision: Union[str, Sequence[str], None] = 'e7bf70c4d387'
+21 | branch_labels: Union[str, Sequence[str], None] = None
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+22 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+20 | down_revision: Union[str, Sequence[str], None] = 'e7bf70c4d387'
+   - branch_labels: Union[str, Sequence[str], None] = None
+21 + branch_labels: str | Sequence[str] | None = None
+22 | depends_on: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\5f1c5bd2957b_ajout_du_champ_nin_sur_visitor.py:22:13
+   |
+20 | down_revision: Union[str, Sequence[str], None] = 'e7bf70c4d387'
+21 | branch_labels: Union[str, Sequence[str], None] = None
+22 | depends_on: Union[str, Sequence[str], None] = None
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: Convert to `X | Y`
+   |
+21 | branch_labels: Union[str, Sequence[str], None] = None
+   - depends_on: Union[str, Sequence[str], None] = None
+22 + depends_on: str | Sequence[str] | None = None
+23 |
+   |
+
+UP035 [*] Import from `collections.abc` instead: `Sequence`
+  --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:21:1
+   |
+20 | """
+21 | from typing import Sequence, Union
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+22 |
+23 | import sqlalchemy as sa
+   |
+help: Import from `collections.abc`
+   |
+20 | """
+   - from typing import Sequence, Union
+21 + from typing import Union
+22 + from collections.abc import Sequence
+23 |
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:30:16
+   |
+28 | # revision identifiers, used by Alembic.
+29 | revision: str = 'a3d7e91c40b2'
+30 | down_revision: Union[str, Sequence[str], None] = '5f1c5bd2957b'
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+31 | branch_labels: Union[str, Sequence[str], None] = None
+32 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+29 | revision: str = 'a3d7e91c40b2'
+   - down_revision: Union[str, Sequence[str], None] = '5f1c5bd2957b'
+30 + down_revision: str | Sequence[str] | None = '5f1c5bd2957b'
+31 | branch_labels: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:31:16
+   |
+29 | revision: str = 'a3d7e91c40b2'
+30 | down_revision: Union[str, Sequence[str], None] = '5f1c5bd2957b'
+31 | branch_labels: Union[str, Sequence[str], None] = None
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+32 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+30 | down_revision: Union[str, Sequence[str], None] = '5f1c5bd2957b'
+   - branch_labels: Union[str, Sequence[str], None] = None
+31 + branch_labels: str | Sequence[str] | None = None
+32 | depends_on: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:32:13
+   |
+30 | down_revision: Union[str, Sequence[str], None] = '5f1c5bd2957b'
+31 | branch_labels: Union[str, Sequence[str], None] = None
+32 | depends_on: Union[str, Sequence[str], None] = None
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: Convert to `X | Y`
+   |
+31 | branch_labels: Union[str, Sequence[str], None] = None
+   - depends_on: Union[str, Sequence[str], None] = None
+32 + depends_on: str | Sequence[str] | None = None
+33 |
+   |
+
+E501 Line too long (101 > 100)
+   --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:107:101
+    |
+105 |         sa.Column("id", sa.Uuid(), nullable=False),
+106 |         sa.Column(
+107 |             "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+    |                                                                                                     ^
+108 |         ),
+109 |         sa.Column(
+    |
+
+E501 Line too long (101 > 100)
+   --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:110:101
+    |
+108 |         ),
+109 |         sa.Column(
+110 |             "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+    |                                                                                                     ^
+111 |         ),
+112 |         sa.ForeignKeyConstraint(
+    |
+
+E501 Line too long (101 > 100)
+   --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:134:101
+    |
+132 |         sa.Column("id", sa.Uuid(), nullable=False),
+133 |         sa.Column(
+134 |             "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+    |                                                                                                     ^
+135 |         ),
+136 |         sa.Column(
+    |
+
+E501 Line too long (101 > 100)
+   --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:137:101
+    |
+135 |         ),
+136 |         sa.Column(
+137 |             "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+    |                                                                                                     ^
+138 |         ),
+139 |         sa.ForeignKeyConstraint(
+    |
+
+E501 Line too long (101 > 100)
+   --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:161:101
+    |
+159 |         sa.Column("id", sa.Uuid(), nullable=False),
+160 |         sa.Column(
+161 |             "created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+    |                                                                                                     ^
+162 |         ),
+163 |         sa.Column(
+    |
+
+E501 Line too long (101 > 100)
+   --> alembic\versions\a3d7e91c40b2_dashboard_admin.py:164:101
+    |
+162 |         ),
+163 |         sa.Column(
+164 |             "updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False
+    |                                                                                                     ^
+165 |         ),
+166 |         sa.ForeignKeyConstraint(
+    |
+
+UP035 [*] Import from `collections.abc` instead: `Sequence`
+  --> alembic\versions\b4e2af8c1d93_photos_recto_verso_du_document.py:17:1
+   |
+16 | """
+17 | from typing import Sequence, Union
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+18 |
+19 | from alembic import op
+   |
+help: Import from `collections.abc`
+   |
+16 | """
+   - from typing import Sequence, Union
+17 + from typing import Union
+18 + from collections.abc import Sequence
+19 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> alembic\versions\b4e2af8c1d93_photos_recto_verso_du_document.py:17:1
+   |
+16 |   """
+17 | / from typing import Sequence, Union
+18 | |
+19 | | from alembic import op
+20 | | import sqlalchemy as sa
+   | |_______________________^
+   |
+help: Organize imports
+   |
+18 |
+   - from alembic import op
+19 | import sqlalchemy as sa
+20 |
+21 + from alembic import op
+22 |
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\b4e2af8c1d93_photos_recto_verso_du_document.py:25:16
+   |
+23 | # revision identifiers, used by Alembic.
+24 | revision: str = 'b4e2af8c1d93'
+25 | down_revision: Union[str, Sequence[str], None] = 'a3d7e91c40b2'
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+26 | branch_labels: Union[str, Sequence[str], None] = None
+27 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+24 | revision: str = 'b4e2af8c1d93'
+   - down_revision: Union[str, Sequence[str], None] = 'a3d7e91c40b2'
+25 + down_revision: str | Sequence[str] | None = 'a3d7e91c40b2'
+26 | branch_labels: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\b4e2af8c1d93_photos_recto_verso_du_document.py:26:16
+   |
+24 | revision: str = 'b4e2af8c1d93'
+25 | down_revision: Union[str, Sequence[str], None] = 'a3d7e91c40b2'
+26 | branch_labels: Union[str, Sequence[str], None] = None
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+27 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+25 | down_revision: Union[str, Sequence[str], None] = 'a3d7e91c40b2'
+   - branch_labels: Union[str, Sequence[str], None] = None
+26 + branch_labels: str | Sequence[str] | None = None
+27 | depends_on: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\b4e2af8c1d93_photos_recto_verso_du_document.py:27:13
+   |
+25 | down_revision: Union[str, Sequence[str], None] = 'a3d7e91c40b2'
+26 | branch_labels: Union[str, Sequence[str], None] = None
+27 | depends_on: Union[str, Sequence[str], None] = None
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: Convert to `X | Y`
+   |
+26 | branch_labels: Union[str, Sequence[str], None] = None
+   - depends_on: Union[str, Sequence[str], None] = None
+27 + depends_on: str | Sequence[str] | None = None
+28 |
+   |
+
+UP035 [*] Import from `collections.abc` instead: `Sequence`
+  --> alembic\versions\c9a4d13f6e27_agent_visite_facultatif.py:19:1
+   |
+18 | """
+19 | from typing import Sequence, Union
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+20 |
+21 | from alembic import op
+   |
+help: Import from `collections.abc`
+   |
+18 | """
+   - from typing import Sequence, Union
+19 + from typing import Union
+20 + from collections.abc import Sequence
+21 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> alembic\versions\c9a4d13f6e27_agent_visite_facultatif.py:19:1
+   |
+18 |   """
+19 | / from typing import Sequence, Union
+20 | |
+21 | | from alembic import op
+22 | | import sqlalchemy as sa
+   | |_______________________^
+   |
+help: Organize imports
+   |
+20 |
+   - from alembic import op
+21 | import sqlalchemy as sa
+22 |
+23 + from alembic import op
+24 |
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\c9a4d13f6e27_agent_visite_facultatif.py:27:16
+   |
+25 | # revision identifiers, used by Alembic.
+26 | revision: str = 'c9a4d13f6e27'
+27 | down_revision: Union[str, Sequence[str], None] = 'b4e2af8c1d93'
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+28 | branch_labels: Union[str, Sequence[str], None] = None
+29 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+26 | revision: str = 'c9a4d13f6e27'
+   - down_revision: Union[str, Sequence[str], None] = 'b4e2af8c1d93'
+27 + down_revision: str | Sequence[str] | None = 'b4e2af8c1d93'
+28 | branch_labels: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\c9a4d13f6e27_agent_visite_facultatif.py:28:16
+   |
+26 | revision: str = 'c9a4d13f6e27'
+27 | down_revision: Union[str, Sequence[str], None] = 'b4e2af8c1d93'
+28 | branch_labels: Union[str, Sequence[str], None] = None
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+29 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+27 | down_revision: Union[str, Sequence[str], None] = 'b4e2af8c1d93'
+   - branch_labels: Union[str, Sequence[str], None] = None
+28 + branch_labels: str | Sequence[str] | None = None
+29 | depends_on: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\c9a4d13f6e27_agent_visite_facultatif.py:29:13
+   |
+27 | down_revision: Union[str, Sequence[str], None] = 'b4e2af8c1d93'
+28 | branch_labels: Union[str, Sequence[str], None] = None
+29 | depends_on: Union[str, Sequence[str], None] = None
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: Convert to `X | Y`
+   |
+28 | branch_labels: Union[str, Sequence[str], None] = None
+   - depends_on: Union[str, Sequence[str], None] = None
+29 + depends_on: str | Sequence[str] | None = None
+30 |
+   |
+
+E501 Line too long (101 > 100)
+  --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:42:101
+   |
+40 |     op.add_column("organizations", sa.Column("logo_url", sa.String(length=500), nullable=True))
+41 |     op.add_column("organizations", sa.Column("primary_color", sa.String(length=20), nullable=True))
+42 |     op.add_column("organizations", sa.Column("secondary_color", sa.String(length=20), nullable=True))
+   |                                                                                                     ^
+43 |     op.add_column("organizations", sa.Column("accent_color", sa.String(length=20), nullable=True))
+44 |     op.add_column("organizations", sa.Column("theme_config", sa.JSON(), nullable=True))
+   |
+
+E501 Line too long (106 > 100)
+  --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:71:101
+   |
+69 |         sa.Column("sms_sent_at", sa.DateTime(timezone=True), nullable=True),
+70 |         sa.Column("id", sa.Uuid(), nullable=False),
+71 |         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^^^^^
+72 |         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+73 |         sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="RESTRICT"),
+   |
+
+E501 Line too long (106 > 100)
+  --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:72:101
+   |
+70 |         sa.Column("id", sa.Uuid(), nullable=False),
+71 |         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+72 |         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^^^^^
+73 |         sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="RESTRICT"),
+74 |         sa.ForeignKeyConstraint(["visit_id"], ["visits.id"], ondelete="CASCADE"),
+   |
+
+E501 Line too long (115 > 100)
+  --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:79:101
+   |
+77 |         sa.PrimaryKeyConstraint("id", name=op.f("pk_forgotten_document_cases")),
+78 |     )
+79 |     op.create_index("ix_forgotten_document_cases_organization_id", "forgotten_document_cases", ["organization_id"])
+   |                                                                                                     ^^^^^^^^^^^^^^^
+80 |     op.create_index("ix_forgotten_document_cases_visit_id", "forgotten_document_cases", ["visit_id"], unique=True)
+81 |     op.create_index("ix_forgotten_document_cases_visitor_id", "forgotten_document_cases", ["visitor_id"])
+   |
+
+E501 Line too long (114 > 100)
+  --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:80:101
+   |
+78 |     )
+79 |     op.create_index("ix_forgotten_document_cases_organization_id", "forgotten_document_cases", ["organization_id"])
+80 |     op.create_index("ix_forgotten_document_cases_visit_id", "forgotten_document_cases", ["visit_id"], unique=True)
+   |                                                                                                     ^^^^^^^^^^^^^^
+81 |     op.create_index("ix_forgotten_document_cases_visitor_id", "forgotten_document_cases", ["visitor_id"])
+82 |     op.create_index("ix_forgotten_document_cases_status", "forgotten_document_cases", ["status"])
+   |
+
+E501 Line too long (105 > 100)
+  --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:81:101
+   |
+79 |     op.create_index("ix_forgotten_document_cases_organization_id", "forgotten_document_cases", ["organization_id"])
+80 |     op.create_index("ix_forgotten_document_cases_visit_id", "forgotten_document_cases", ["visit_id"], unique=True)
+81 |     op.create_index("ix_forgotten_document_cases_visitor_id", "forgotten_document_cases", ["visitor_id"])
+   |                                                                                                     ^^^^^
+82 |     op.create_index("ix_forgotten_document_cases_status", "forgotten_document_cases", ["status"])
+83 |     op.create_index("ix_forgotten_doc_org_status", "forgotten_document_cases", ["organization_id", "status"])
+   |
+
+E501 Line too long (109 > 100)
+  --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:83:101
+   |
+81 |     op.create_index("ix_forgotten_document_cases_visitor_id", "forgotten_document_cases", ["visitor_id"])
+82 |     op.create_index("ix_forgotten_document_cases_status", "forgotten_document_cases", ["status"])
+83 |     op.create_index("ix_forgotten_doc_org_status", "forgotten_document_cases", ["organization_id", "status"])
+   |                                                                                                     ^^^^^^^^^
+84 |
+85 |     op.create_table(
+   |
+
+E501 Line too long (107 > 100)
+  --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:91:101
+   |
+89 |         sa.Column("closed_visits_count", sa.Integer(), nullable=False),
+90 |         sa.Column("cases_created_count", sa.Integer(), nullable=False),
+91 |         sa.Column("executed_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^^^^^^
+92 |         sa.Column("id", sa.Uuid(), nullable=False),
+93 |         sa.ForeignKeyConstraint(["organization_id"], ["organizations.id"], ondelete="CASCADE"),
+   |
+
+E501 Line too long (111 > 100)
+  --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:97:101
+   |
+95 |         sa.UniqueConstraint("organization_id", "run_date", name="uq_auto_closure_org_date"),
+96 |     )
+97 |     op.create_index("ix_automatic_closure_runs_organization_id", "automatic_closure_runs", ["organization_id"])
+   |                                                                                                     ^^^^^^^^^^^
+98 |     op.create_index("ix_automatic_closure_runs_run_date", "automatic_closure_runs", ["run_date"])
+   |
+
+E501 Line too long (103 > 100)
+   --> alembic\versions\d2f4a8b91c77_cloture_automatique_pieces_branding.py:110:101
+    |
+108 |     op.drop_index("ix_forgotten_document_cases_visitor_id", table_name="forgotten_document_cases")
+109 |     op.drop_index("ix_forgotten_document_cases_visit_id", table_name="forgotten_document_cases")
+110 |     op.drop_index("ix_forgotten_document_cases_organization_id", table_name="forgotten_document_cases")
+    |                                                                                                     ^^^
+111 |     op.drop_table("forgotten_document_cases")
+    |
+
+UP035 [*] Import from `collections.abc` instead: `Sequence`
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:11:1
+   |
+10 | """
+11 | from typing import Sequence, Union
+   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+12 |
+13 | from alembic import op
+   |
+help: Import from `collections.abc`
+   |
+10 | """
+   - from typing import Sequence, Union
+11 + from typing import Union
+12 + from collections.abc import Sequence
+13 |
+   |
+
+I001 [*] Import block is un-sorted or un-formatted
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:11:1
+   |
+10 |   """
+11 | / from typing import Sequence, Union
+12 | |
+13 | | from alembic import op
+14 | | import sqlalchemy as sa
+   | |_______________________^
+   |
+help: Organize imports
+   |
+12 |
+   - from alembic import op
+13 | import sqlalchemy as sa
+14 |
+15 + from alembic import op
+16 |
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:19:16
+   |
+17 | # revision identifiers, used by Alembic.
+18 | revision: str = 'e7bf70c4d387'
+19 | down_revision: Union[str, Sequence[str], None] = None
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+20 | branch_labels: Union[str, Sequence[str], None] = None
+21 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+18 | revision: str = 'e7bf70c4d387'
+   - down_revision: Union[str, Sequence[str], None] = None
+19 + down_revision: str | Sequence[str] | None = None
+20 | branch_labels: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:20:16
+   |
+18 | revision: str = 'e7bf70c4d387'
+19 | down_revision: Union[str, Sequence[str], None] = None
+20 | branch_labels: Union[str, Sequence[str], None] = None
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+21 | depends_on: Union[str, Sequence[str], None] = None
+   |
+help: Convert to `X | Y`
+   |
+19 | down_revision: Union[str, Sequence[str], None] = None
+   - branch_labels: Union[str, Sequence[str], None] = None
+20 + branch_labels: str | Sequence[str] | None = None
+21 | depends_on: Union[str, Sequence[str], None] = None
+   |
+
+UP007 [*] Use `X | Y` for type annotations
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:21:13
+   |
+19 | down_revision: Union[str, Sequence[str], None] = None
+20 | branch_labels: Union[str, Sequence[str], None] = None
+21 | depends_on: Union[str, Sequence[str], None] = None
+   |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+help: Convert to `X | Y`
+   |
+20 | branch_labels: Union[str, Sequence[str], None] = None
+   - depends_on: Union[str, Sequence[str], None] = None
+21 + depends_on: str | Sequence[str] | None = None
+22 |
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:30:101
+   |
+28 |     sa.Column('libelle', sa.String(length=200), nullable=False),
+29 |     sa.Column('id', sa.Uuid(), nullable=False),
+30 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+31 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+32 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_purposes')),
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:31:101
+   |
+29 |     sa.Column('id', sa.Uuid(), nullable=False),
+30 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+31 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+32 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_purposes')),
+33 |     sa.UniqueConstraint('libelle', name=op.f('uq_purposes_libelle'))
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:41:101
+   |
+39 |     sa.Column('parent_id', sa.Uuid(), nullable=True),
+40 |     sa.Column('id', sa.Uuid(), nullable=False),
+41 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+42 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+43 |     sa.ForeignKeyConstraint(['parent_id'], ['services.id'], name=op.f('fk_services_parent_id_services'), ondelete='SET NULL'),
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:42:101
+   |
+40 |     sa.Column('id', sa.Uuid(), nullable=False),
+41 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+42 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+43 |     sa.ForeignKeyConstraint(['parent_id'], ['services.id'], name=op.f('fk_services_parent_id_services'), ondelete='SET NULL'),
+44 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_services'))
+   |
+
+E501 Line too long (126 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:43:101
+   |
+41 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+42 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+43 |     sa.ForeignKeyConstraint(['parent_id'], ['services.id'], name=op.f('fk_services_parent_id_services'), ondelete='SET NULL'),
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+44 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_services'))
+45 |     )
+   |
+
+E501 Line too long (107 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:54:101
+   |
+52 |     sa.Column('mot_de_passe_hash', sa.String(length=255), nullable=False),
+53 |     sa.Column('poste', sa.String(length=150), nullable=True),
+54 |     sa.Column('role', sa.Enum('AGENT_CONTROLE', 'SUPERVISEUR', 'ADMIN', name='user_role'), nullable=False),
+   |                                                                                                     ^^^^^^^
+55 |     sa.Column('is_active', sa.Boolean(), nullable=False),
+56 |     sa.Column('id', sa.Uuid(), nullable=False),
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:57:101
+   |
+55 |     sa.Column('is_active', sa.Boolean(), nullable=False),
+56 |     sa.Column('id', sa.Uuid(), nullable=False),
+57 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+58 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+59 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_users'))
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:58:101
+   |
+56 |     sa.Column('id', sa.Uuid(), nullable=False),
+57 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+58 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+59 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_users'))
+60 |     )
+   |
+
+E501 Line too long (108 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:67:101
+   |
+65 |     sa.Column('prenom', sa.String(length=150), nullable=False),
+66 |     sa.Column('nom', sa.String(length=150), nullable=False),
+67 |     sa.Column('type_document', sa.Enum('CNI', 'PASSEPORT', 'PERMIS', name='document_type'), nullable=False),
+   |                                                                                                     ^^^^^^^^
+68 |     sa.Column('numero_document', sa.String(length=60), nullable=False),
+69 |     sa.Column('nationalite', sa.String(length=60), nullable=True),
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:79:101
+   |
+77 |     sa.Column('mrz_image_url', sa.String(length=500), nullable=True),
+78 |     sa.Column('id', sa.Uuid(), nullable=False),
+79 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+80 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+81 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_visitors'))
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:80:101
+   |
+78 |     sa.Column('id', sa.Uuid(), nullable=False),
+79 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+80 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+81 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_visitors'))
+82 |     )
+   |
+
+E501 Line too long (107 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:85:101
+   |
+83 |     with op.batch_alter_table('visitors', schema=None) as batch_op:
+84 |         batch_op.create_index(batch_op.f('ix_visitors_nom'), ['nom'], unique=False)
+85 |         batch_op.create_index(batch_op.f('ix_visitors_numero_document'), ['numero_document'], unique=False)
+   |                                                                                                     ^^^^^^^
+86 |
+87 |     op.create_table('agents',
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:93:101
+   |
+91 |     sa.Column('service_id', sa.Uuid(), nullable=False),
+92 |     sa.Column('id', sa.Uuid(), nullable=False),
+93 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+94 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+95 |     sa.ForeignKeyConstraint(['service_id'], ['services.id'], name=op.f('fk_agents_service_id_services'), ondelete='CASCADE'),
+   |
+
+E501 Line too long (102 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:94:101
+   |
+92 |     sa.Column('id', sa.Uuid(), nullable=False),
+93 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+94 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+   |                                                                                                     ^^
+95 |     sa.ForeignKeyConstraint(['service_id'], ['services.id'], name=op.f('fk_agents_service_id_services'), ondelete='CASCADE'),
+96 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_agents'))
+   |
+
+E501 Line too long (125 > 100)
+  --> alembic\versions\e7bf70c4d387_initial_schema.py:95:101
+   |
+93 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+94 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+95 |     sa.ForeignKeyConstraint(['service_id'], ['services.id'], name=op.f('fk_agents_service_id_services'), ondelete='CASCADE'),
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+96 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_agents'))
+97 |     )
+   |
+
+E501 Line too long (102 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:107:101
+    |
+105 |     sa.Column('expires_at', sa.DateTime(timezone=True), nullable=False),
+106 |     sa.Column('id', sa.Uuid(), nullable=False),
+107 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+    |                                                                                                     ^^
+108 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+109 |     sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_revoked_tokens_user_id_users'), ondelete='CASCADE'),
+    |
+
+E501 Line too long (102 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:108:101
+    |
+106 |     sa.Column('id', sa.Uuid(), nullable=False),
+107 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+108 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+    |                                                                                                     ^^
+109 |     sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_revoked_tokens_user_id_users'), ondelete='CASCADE'),
+110 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_revoked_tokens'))
+    |
+
+E501 Line too long (121 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:109:101
+    |
+107 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+108 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+109 |     sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_revoked_tokens_user_id_users'), ondelete='CASCADE'),
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^
+110 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_revoked_tokens'))
+111 |     )
+    |
+
+E501 Line too long (102 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:131:101
+    |
+129 |     sa.Column('client_reference', sa.String(length=100), nullable=True),
+130 |     sa.Column('id', sa.Uuid(), nullable=False),
+131 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+    |                                                                                                     ^^
+132 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+133 |     sa.ForeignKeyConstraint(['agent_id'], ['agents.id'], name=op.f('fk_visits_agent_id_agents'), ondelete='RESTRICT'),
+    |
+
+E501 Line too long (102 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:132:101
+    |
+130 |     sa.Column('id', sa.Uuid(), nullable=False),
+131 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+132 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+    |                                                                                                     ^^
+133 |     sa.ForeignKeyConstraint(['agent_id'], ['agents.id'], name=op.f('fk_visits_agent_id_agents'), ondelete='RESTRICT'),
+134 |     sa.ForeignKeyConstraint(['checked_in_by'], ['users.id'], name=op.f('fk_visits_checked_in_by_users'), ondelete='RESTRICT'),
+    |
+
+E501 Line too long (118 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:133:101
+    |
+131 |     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+132 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+133 |     sa.ForeignKeyConstraint(['agent_id'], ['agents.id'], name=op.f('fk_visits_agent_id_agents'), ondelete='RESTRICT'),
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^
+134 |     sa.ForeignKeyConstraint(['checked_in_by'], ['users.id'], name=op.f('fk_visits_checked_in_by_users'), ondelete='RESTRICT'),
+135 |     sa.ForeignKeyConstraint(['checked_out_by'], ['users.id'], name=op.f('fk_visits_checked_out_by_users'), ondelete='RESTRICT'),
+    |
+
+E501 Line too long (126 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:134:101
+    |
+132 |     sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+133 |     sa.ForeignKeyConstraint(['agent_id'], ['agents.id'], name=op.f('fk_visits_agent_id_agents'), ondelete='RESTRICT'),
+134 |     sa.ForeignKeyConstraint(['checked_in_by'], ['users.id'], name=op.f('fk_visits_checked_in_by_users'), ondelete='RESTRICT'),
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+135 |     sa.ForeignKeyConstraint(['checked_out_by'], ['users.id'], name=op.f('fk_visits_checked_out_by_users'), ondelete='RESTRICT'),
+136 |     sa.ForeignKeyConstraint(['purpose_id'], ['purposes.id'], name=op.f('fk_visits_purpose_id_purposes'), ondelete='SET NULL'),
+    |
+
+E501 Line too long (128 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:135:101
+    |
+133 |     sa.ForeignKeyConstraint(['agent_id'], ['agents.id'], name=op.f('fk_visits_agent_id_agents'), ondelete='RESTRICT'),
+134 |     sa.ForeignKeyConstraint(['checked_in_by'], ['users.id'], name=op.f('fk_visits_checked_in_by_users'), ondelete='RESTRICT'),
+135 |     sa.ForeignKeyConstraint(['checked_out_by'], ['users.id'], name=op.f('fk_visits_checked_out_by_users'), ondelete='RESTRICT'),
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+136 |     sa.ForeignKeyConstraint(['purpose_id'], ['purposes.id'], name=op.f('fk_visits_purpose_id_purposes'), ondelete='SET NULL'),
+137 |     sa.ForeignKeyConstraint(['service_id'], ['services.id'], name=op.f('fk_visits_service_id_services'), ondelete='RESTRICT'),
+    |
+
+E501 Line too long (126 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:136:101
+    |
+134 |     sa.ForeignKeyConstraint(['checked_in_by'], ['users.id'], name=op.f('fk_visits_checked_in_by_users'), ondelete='RESTRICT'),
+135 |     sa.ForeignKeyConstraint(['checked_out_by'], ['users.id'], name=op.f('fk_visits_checked_out_by_users'), ondelete='RESTRICT'),
+136 |     sa.ForeignKeyConstraint(['purpose_id'], ['purposes.id'], name=op.f('fk_visits_purpose_id_purposes'), ondelete='SET NULL'),
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+137 |     sa.ForeignKeyConstraint(['service_id'], ['services.id'], name=op.f('fk_visits_service_id_services'), ondelete='RESTRICT'),
+138 |     sa.ForeignKeyConstraint(['visitor_id'], ['visitors.id'], name=op.f('fk_visits_visitor_id_visitors'), ondelete='RESTRICT'),
+    |
+
+E501 Line too long (126 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:137:101
+    |
+135 |     sa.ForeignKeyConstraint(['checked_out_by'], ['users.id'], name=op.f('fk_visits_checked_out_by_users'), ondelete='RESTRICT'),
+136 |     sa.ForeignKeyConstraint(['purpose_id'], ['purposes.id'], name=op.f('fk_visits_purpose_id_purposes'), ondelete='SET NULL'),
+137 |     sa.ForeignKeyConstraint(['service_id'], ['services.id'], name=op.f('fk_visits_service_id_services'), ondelete='RESTRICT'),
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+138 |     sa.ForeignKeyConstraint(['visitor_id'], ['visitors.id'], name=op.f('fk_visits_visitor_id_visitors'), ondelete='RESTRICT'),
+139 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_visits'))
+    |
+
+E501 Line too long (126 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:138:101
+    |
+136 |     sa.ForeignKeyConstraint(['purpose_id'], ['purposes.id'], name=op.f('fk_visits_purpose_id_purposes'), ondelete='SET NULL'),
+137 |     sa.ForeignKeyConstraint(['service_id'], ['services.id'], name=op.f('fk_visits_service_id_services'), ondelete='RESTRICT'),
+138 |     sa.ForeignKeyConstraint(['visitor_id'], ['visitors.id'], name=op.f('fk_visits_visitor_id_visitors'), ondelete='RESTRICT'),
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+139 |     sa.PrimaryKeyConstraint('id', name=op.f('pk_visits'))
+140 |     )
+    |
+
+E501 Line too long (101 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:143:101
+    |
+141 |     with op.batch_alter_table('visits', schema=None) as batch_op:
+142 |         batch_op.create_index(batch_op.f('ix_visits_agent_id'), ['agent_id'], unique=False)
+143 |         batch_op.create_index(batch_op.f('ix_visits_checked_in_at'), ['checked_in_at'], unique=False)
+    |                                                                                                     ^
+144 |         batch_op.create_index(batch_op.f('ix_visits_client_reference'), ['client_reference'], unique=True)
+145 |         batch_op.create_index(batch_op.f('ix_visits_service_id'), ['service_id'], unique=False)
+    |
+
+E501 Line too long (106 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:144:101
+    |
+142 |         batch_op.create_index(batch_op.f('ix_visits_agent_id'), ['agent_id'], unique=False)
+143 |         batch_op.create_index(batch_op.f('ix_visits_checked_in_at'), ['checked_in_at'], unique=False)
+144 |         batch_op.create_index(batch_op.f('ix_visits_client_reference'), ['client_reference'], unique=True)
+    |                                                                                                     ^^^^^^
+145 |         batch_op.create_index(batch_op.f('ix_visits_service_id'), ['service_id'], unique=False)
+146 |         batch_op.create_index('ix_visits_statut_checked_in_at', ['statut', 'checked_in_at'], unique=False)
+    |
+
+E501 Line too long (106 > 100)
+   --> alembic\versions\e7bf70c4d387_initial_schema.py:146:101
+    |
+144 |         batch_op.create_index(batch_op.f('ix_visits_client_reference'), ['client_reference'], unique=True)
+145 |         batch_op.create_index(batch_op.f('ix_visits_service_id'), ['service_id'], unique=False)
+146 |         batch_op.create_index('ix_visits_statut_checked_in_at', ['statut', 'checked_in_at'], unique=False)
+    |                                                                                                     ^^^^^^
+147 |         batch_op.create_index(batch_op.f('ix_visits_visitor_id'), ['visitor_id'], unique=False)
+    |
+
+E501 Line too long (121 > 100)
+  --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:40:101
+   |
+38 |         sa.Column('contact_phone', sa.String(length=40), nullable=True),
+39 |         sa.Column('is_active', sa.Boolean(), server_default='1', nullable=False),
+40 |         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^
+41 |         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
+42 |         sa.PrimaryKeyConstraint('id', name=op.f('pk_organizations')),
+   |
+
+E501 Line too long (121 > 100)
+  --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:41:101
+   |
+39 |         sa.Column('is_active', sa.Boolean(), server_default='1', nullable=False),
+40 |         sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
+41 |         sa.Column('updated_at', sa.DateTime(timezone=True), server_default=sa.text('CURRENT_TIMESTAMP'), nullable=False),
+   |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^
+42 |         sa.PrimaryKeyConstraint('id', name=op.f('pk_organizations')),
+43 |     )
+   |
+
+E501 Line too long (103 > 100)
+  --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:88:101
+   |
+86 |     # 4. Ajout de organization_id sur services et assouplissement de l'index code
+87 |     op.add_column('services', sa.Column('organization_id', sa.Uuid(as_uuid=True), nullable=True))
+88 |     op.create_index(op.f('ix_services_organization_id'), 'services', ['organization_id'], unique=False)
+   |                                                                                                     ^^^
+89 |     with op.batch_alter_table('services') as batch_op:
+90 |         batch_op.drop_index('ix_services_code')
+   |
+
+E501 Line too long (126 > 100)
+   --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:103:101
+    |
+101 |     op.add_column('visits', sa.Column('organization_id', sa.Uuid(as_uuid=True), nullable=True))
+102 |     op.create_index(op.f('ix_visits_organization_id'), 'visits', ['organization_id'], unique=False)
+103 |     op.create_index('ix_visits_org_statut_checked_in', 'visits', ['organization_id', 'statut', 'checked_in_at'], unique=False)
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+104 |     with op.batch_alter_table('visits') as batch_op:
+105 |         batch_op.create_foreign_key(
+    |
+
+E501 Line too long (125 > 100)
+   --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:115:101
+    |
+113 |     # 6. Backfill des données existantes vers l'organisation par défaut
+114 |     bind.execute(
+115 |         sa.text("UPDATE users SET organization_id = :org_id WHERE organization_id IS NULL").bindparams(org_id=DEFAULT_ORG_ID)
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^
+116 |     )
+117 |     bind.execute(
+    |
+
+E501 Line too long (128 > 100)
+   --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:118:101
+    |
+116 |     )
+117 |     bind.execute(
+118 |         sa.text("UPDATE services SET organization_id = :org_id WHERE organization_id IS NULL").bindparams(org_id=DEFAULT_ORG_ID)
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+119 |     )
+120 |     bind.execute(
+    |
+
+E501 Line too long (126 > 100)
+   --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:121:101
+    |
+119 |     )
+120 |     bind.execute(
+121 |         sa.text("UPDATE visits SET organization_id = :org_id WHERE organization_id IS NULL").bindparams(org_id=DEFAULT_ORG_ID)
+    |                                                                                                     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+122 |     )
+    |
+
+E501 Line too long (107 > 100)
+   --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:127:101
+    |
+125 | def downgrade() -> None:
+126 |     with op.batch_alter_table('visits') as batch_op:
+127 |         batch_op.drop_constraint(batch_op.f('fk_visits_organization_id_organizations'), type_='foreignkey')
+    |                                                                                                     ^^^^^^^
+128 |         batch_op.drop_index('ix_visits_org_statut_checked_in')
+129 |         batch_op.drop_index(batch_op.f('ix_visits_organization_id'))
+    |
+
+E501 Line too long (109 > 100)
+   --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:133:101
+    |
+132 |     with op.batch_alter_table('services') as batch_op:
+133 |         batch_op.drop_constraint(batch_op.f('fk_services_organization_id_organizations'), type_='foreignkey')
+    |                                                                                                     ^^^^^^^^^
+134 |         batch_op.drop_index(batch_op.f('ix_services_organization_id'))
+135 |         batch_op.drop_index('ix_services_code')
+    |
+
+E501 Line too long (106 > 100)
+   --> alembic\versions\f8a1c9e30b12_ajout_multi_organisations.py:140:101
+    |
+139 |     with op.batch_alter_table('users') as batch_op:
+140 |         batch_op.drop_constraint(batch_op.f('fk_users_organization_id_organizations'), type_='foreignkey')
+    |                                                                                                     ^^^^^^
+141 |         batch_op.drop_index(batch_op.f('ix_users_organization_id'))
+142 |         batch_op.drop_column('organization_id')
+    |
+
+Found 79 errors.
+[*] 24 fixable with the `--fix` option.

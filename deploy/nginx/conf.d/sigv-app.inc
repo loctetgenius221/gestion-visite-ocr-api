@@ -19,6 +19,7 @@ location /api/v1/auth/ {
 # nginx de 60 s couperait la connexion avant la réponse.
 location /api/v1/ocr/ {
     limit_req zone=sigv_api burst=10 nodelay;
+    limit_req zone=sigv_ip burst=100 nodelay;
     include /etc/nginx/conf.d/proxy.inc;
     proxy_pass http://sigv_api;
     proxy_read_timeout 180s;
@@ -30,6 +31,7 @@ location /api/v1/ocr/ {
 # --- Reste de l'API ------------------------------------------------------------
 location /api/v1/ {
     limit_req zone=sigv_api burst=40 nodelay;
+    limit_req zone=sigv_ip burst=100 nodelay;
     include /etc/nginx/conf.d/proxy.inc;
     proxy_pass http://sigv_api;
     proxy_read_timeout 60s;

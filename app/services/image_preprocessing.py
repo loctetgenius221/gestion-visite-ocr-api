@@ -189,7 +189,8 @@ def detect_mrz_region(gray: np.ndarray) -> tuple[int, int, int, int] | None:
     grad = cv2.morphologyEx(grad, cv2.MORPH_CLOSE, rect_kernel)
     _, thresh = cv2.threshold(grad, 0, 255, cv2.THRESH_BINARY | cv2.THRESH_OTSU)
     thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, square_kernel)
-    thresh = cv2.erode(thresh, None, iterations=4)
+    # Noyau 3×3 explicite : c'est celui qu'OpenCV prend quand on passe `None`.
+    thresh = cv2.erode(thresh, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)), iterations=4)
 
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     candidates: list[tuple[int, int, int, int]] = []

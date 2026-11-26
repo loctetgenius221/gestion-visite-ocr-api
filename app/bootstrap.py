@@ -112,7 +112,8 @@ async def bootstrap(
             motifs_crees = len(MOTIFS_COMMUNS)
 
         await session.commit()
-        assert organisation is not None
+        if organisation is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : organisation est None.")
         return organisation, creee, motifs_crees
 
 

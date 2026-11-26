@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import jwt
 import pytest
-from jose import jwt
 
 from app.core.config import settings
 from app.core.errors import InvalidTokenError
@@ -36,6 +36,17 @@ class TestHashage:
         long = "a" * 200
         assert verify_password(long, hash_password(long))
 
+    def test_le_cout_vient_de_la_configuration(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "BCRYPT_ROUNDS", 5)
+        assert hash_password("x").startswith("$2b$05$")
+
+    def test_un_hash_dun_autre_cout_reste_verifiable(self, monkeypatch: pytest.MonkeyPatch):
+        """Changer BCRYPT_ROUNDS ne doit invalider aucun mot de passe existant."""
+        monkeypatch.setattr(settings, "BCRYPT_ROUNDS", 6)
+        ancien = hash_password("MotDePasse123!")
+        monkeypatch.setattr(settings, "BCRYPT_ROUNDS", 4)
+        assert verify_password("MotDePasse123!", ancien)
+
     def test_hash_malforme_est_rejete_sans_exception(self):
         assert not verify_password("peu importe", "pas-un-hash-bcrypt")
 
@@ -67,7 +78,7 @@ class TestJwt:
     def test_signature_invalide_est_rejetee(self):
         token = jwt.encode(
             {"sub": "user-123", "type": "access", "jti": "x", "exp": 9999999999},
-            "mauvaise-cle",
+            "mauvaise-cle-de-32-octets-au-minimum",
             algorithm=settings.JWT_ALGORITHM,
         )
         with pytest.raises(InvalidTokenError):
@@ -93,6 +104,15 @@ class TestJwt:
             {"sub": "user-123", "exp": 9999999999},
             settings.JWT_SECRET_KEY,
             algorithm=settings.JWT_ALGORITHM,
+        )
+        with pytest.raises(InvalidTokenError):
+            decode_token(token)
+
+    def test_algorithme_none_est_rejete(self):
+        token = jwt.encode(
+            {"sub": "user-123", "type": "access", "jti": "x", "exp": 9999999999},
+            None,
+            algorithm="none",
         )
         with pytest.raises(InvalidTokenError):
             decode_token(token)

@@ -9,6 +9,7 @@ from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.recherche import ECHAPPEMENT, motif_contient
 from app.models.enums import DocumentType, VisitStatus
 from app.models.referentiel import Agent, Purpose, Service
 from app.models.visit import Visit
@@ -25,10 +26,11 @@ class VisitorRepository:
         self.session = session
 
     async def get_by_document(
-        self, type_document: DocumentType, numero_document: str
+        self, type_document: DocumentType, numero_document: str, organization_id: uuid.UUID
     ) -> Visitor | None:
-        """Un visiteur est identifié par le couple (type de document, numéro de document)."""
+        """Un visiteur est identifié par sa pièce, **dans une organisation** (ADR-026)."""
         stmt = select(Visitor).where(
+            Visitor.organization_id == organization_id,
             Visitor.type_document == type_document,
             Visitor.numero_document == numero_document,
         )
@@ -77,10 +79,10 @@ class VisitorRepository:
         imprimés par blocs (« 2 K05 2012 00108 ») et l'agent les recopie avec leurs
         espaces, alors que la base les stocke sans séparateurs (ADR-016).
         """
-        motif = f"%{terme.strip().lower()}%"
+        motif = motif_contient(terme.strip().lower())
         clauses = [
-            func.lower(Visitor.nom).like(motif),
-            func.lower(Visitor.prenom).like(motif),
+            func.lower(Visitor.nom).like(motif, escape=ECHAPPEMENT),
+            func.lower(Visitor.prenom).like(motif, escape=ECHAPPEMENT),
         ]
 
         compacte = re.sub(r"[^a-z0-9]", "", terme.lower())
@@ -94,22 +96,8 @@ class VisitorRepository:
 
     @staticmethod
     def _clause_organisation(organization_id: uuid.UUID) -> ColumnElement[bool]:
-        """Restreint aux visiteurs déjà venus dans l'organisation donnée.
-
-        `Visitor` reste volontairement **global** : une même personne peut se
-        présenter dans plusieurs structures, et lui créer une fiche par
-        organisation dupliquerait son identité — donc son numéro de pièce et son
-        NIN — autant de fois qu'elle a d'interlocuteurs. Le cloisonnement porte
-        donc sur le lien de visite, pas sur la fiche : on ne retrouve une personne
-        que si elle est déjà venue chez soi.
-        """
-        venue = aliased(Visit)
-        return (
-            select(venue.id)
-            .where(venue.visitor_id == Visitor.id, venue.organization_id == organization_id)
-            .correlate(Visitor)
-            .exists()
-        )
+        """Restreint aux fiches de l'organisation donnée (ADR-026)."""
+        return Visitor.organization_id == organization_id
 
     async def count_search(self, terme: str, *, organization_id: uuid.UUID | None = None) -> int:
         stmt = select(func.count(Visitor.id)).where(self._clause_recherche(terme))
@@ -233,15 +221,6 @@ class VisitRepository:
         )
         return (await self.session.execute(stmt)).unique().scalars().first()
 
-    async def visitor_has_visited(self, visitor_id: uuid.UUID, organization_id: uuid.UUID) -> bool:
-        """La personne est-elle déjà venue dans cette organisation ?"""
-        stmt = (
-            select(Visit.id)
-            .where(Visit.visitor_id == visitor_id, Visit.organization_id == organization_id)
-            .limit(1)
-        )
-        return (await self.session.execute(stmt)).first() is not None
-
     @staticmethod
     def _apply_filters(stmt: Select, filters: VisitFilters) -> Select:
         if filters.organization_id is not None:
@@ -265,12 +244,12 @@ class VisitRepository:
         if filters.created_by is not None:
             stmt = stmt.where(Visit.checked_in_by == filters.created_by)
         if filters.search:
-            pattern = f"%{filters.search.strip().lower()}%"
+            pattern = motif_contient(filters.search.strip().lower())
             stmt = stmt.join(Visitor, Visit.visitor_id == Visitor.id).where(
                 or_(
-                    func.lower(Visitor.nom).like(pattern),
-                    func.lower(Visitor.prenom).like(pattern),
-                    func.lower(Visitor.numero_document).like(pattern),
+                    func.lower(Visitor.nom).like(pattern, escape=ECHAPPEMENT),
+                    func.lower(Visitor.prenom).like(pattern, escape=ECHAPPEMENT),
+                    func.lower(Visitor.numero_document).like(pattern, escape=ECHAPPEMENT),
                 )
             )
         return stmt

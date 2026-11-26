@@ -13,9 +13,13 @@ from collections.abc import AsyncGenerator
 
 # Doit précéder tout import de `app.core.config` : les settings sont mis en cache.
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
-os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key")
+# 32 octets au moins : PyJWT avertit sous la longueur recommandée pour HS256.
+os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key-de-32-octets-minimum")
 os.environ.setdefault("OCR_PRELOAD_MODEL", "false")
 os.environ.setdefault("LOG_LEVEL", "WARNING")
+# Coût minimal de bcrypt : la sécurité du hachage n'est pas ce que la suite
+# vérifie, et le coût de production (12) la rendait 10 fois plus lente.
+os.environ.setdefault("BCRYPT_ROUNDS", "4")
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
@@ -170,6 +174,7 @@ async def voisine(
         nom="Ndoye",
         type_document=DocumentType.CNI,
         numero_document="PAD0000001",
+        organization_id=other_organization.id,
     )
     session.add_all([agent, visiteur])
     await session.flush()

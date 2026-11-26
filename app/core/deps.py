@@ -30,7 +30,9 @@ from app.services.referentiel_import_service import ReferentielImportService
 from app.services.setting_service import SettingService
 from app.services.storage_service import StorageService, get_storage_service
 from app.services.user_admin_service import UserAdminService
+from app.services.visit_admin_service import VisitAdminService
 from app.services.visit_service import VisitService
+from app.services.visit_sync_service import VisitSyncService
 
 logger = get_logger(__name__)
 
@@ -59,6 +61,14 @@ def get_auth_service(session: SessionDep, context: ClientContextDep) -> AuthServ
 
 def get_visit_service(session: SessionDep, context: ClientContextDep) -> VisitService:
     return VisitService(session, context)
+
+
+def get_visit_admin_service(session: SessionDep, context: ClientContextDep) -> VisitAdminService:
+    return VisitAdminService(session, context)
+
+
+def get_visit_sync_service(session: SessionDep, context: ClientContextDep) -> VisitSyncService:
+    return VisitSyncService(session, context)
 
 
 def get_dashboard_service(session: SessionDep) -> DashboardService:
@@ -95,6 +105,8 @@ def get_auto_closure_service(session: SessionDep) -> AutoClosureService:
 
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 VisitServiceDep = Annotated[VisitService, Depends(get_visit_service)]
+VisitAdminServiceDep = Annotated[VisitAdminService, Depends(get_visit_admin_service)]
+VisitSyncServiceDep = Annotated[VisitSyncService, Depends(get_visit_sync_service)]
 DashboardServiceDep = Annotated[DashboardService, Depends(get_dashboard_service)]
 MrzOcrServiceDep = Annotated[MrzOcrService, Depends(get_mrz_ocr_service)]
 UserAdminServiceDep = Annotated[UserAdminService, Depends(get_user_admin_service)]

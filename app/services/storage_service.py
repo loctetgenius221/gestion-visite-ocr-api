@@ -12,14 +12,30 @@ import uuid
 from abc import ABC, abstractmethod
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 import anyio
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from app.core.config import settings
 from app.core.errors import FileTooLargeError, UnsupportedImageError
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
+
+# Enregistre le décodeur HEIC auprès de Pillow (photos iPhone).
+try:  # pragma: no cover - dépend de l'environnement d'exécution
+    import pillow_heif
+
+    pillow_heif.register_heif_opener()
+except ImportError:  # pragma: no cover
+    logger.warning("pillow-heif indisponible : les images HEIC ne seront pas décodées.")
 
 ALLOWED_IMAGE_EXTENSIONS = frozenset({".jpg", ".jpeg", ".png", ".heic", ".heif"})
+
+# Formats acceptés pour une photo de pièce ou une signature, d'après le
+# **contenu**. MPO est le JPEG « multi-images » de certains téléphones.
+FORMATS_PHOTO = frozenset({"JPEG", "MPO", "PNG", "HEIF"})
 
 # Formats acceptés pour un logo, décidés d'après le **contenu** du fichier et non
 # son extension. SVG en est volontairement absent : c'est un document XML, qui
@@ -42,6 +58,78 @@ def validate_image_upload(filename: str | None, content: bytes) -> str:
     if not content:
         raise UnsupportedImageError("Le fichier envoyé est vide.")
     return suffix
+
+
+def inspecter_image(content: bytes, formats: frozenset[str] = FORMATS_PHOTO) -> str:
+    """Vérifie le format réel et les dimensions d'une image, **sans la décoder**.
+
+    `Image.open` ne lit que l'en-tête : c'est ce qui permet de refuser une bombe
+    de décompression avant qu'elle n'occupe la mémoire (audit SEC-008).
+    Retourne le format détecté.
+    """
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            format_source = (image.format or "").upper()
+            largeur, hauteur = image.size
+    except (UnidentifiedImageError, OSError) as exc:
+        raise UnsupportedImageError("Ce fichier n'est pas une image exploitable.") from exc
+    except Image.DecompressionBombError as exc:
+        raise FileTooLargeError(
+            "L'image dépasse le nombre de pixels autorisé.",
+            details={"max_megapixels": settings.MAX_IMAGE_MEGAPIXELS},
+        ) from exc
+
+    if format_source not in formats:
+        raise UnsupportedImageError(
+            details={"format": format_source or None, "acceptes": sorted(formats)}
+        )
+    if largeur * hauteur > settings.MAX_IMAGE_MEGAPIXELS * 1_000_000:
+        raise FileTooLargeError(
+            "L'image dépasse le nombre de pixels autorisé.",
+            details={
+                "max_megapixels": settings.MAX_IMAGE_MEGAPIXELS,
+                "largeur": largeur,
+                "hauteur": hauteur,
+            },
+        )
+    return format_source
+
+
+SortiePhoto = Literal["JPEG", "PNG"]
+_EXTENSIONS_SORTIE: dict[str, str] = {"JPEG": ".jpg", "PNG": ".png"}
+
+
+def normaliser_photo(content: bytes, sortie: SortiePhoto) -> tuple[bytes, str]:
+    """Vérifie qu'une photo ou une signature est une image, puis la réencode.
+
+    Même principe que `normalize_logo` (audit SEC-007). Un fichier nommé `.png`
+    était stocké tel quel, quel que soit son contenu, puis servi par nginx. Le
+    réencodage à partir des seuls pixels décodés retire aussi les métadonnées,
+    dont la position GPS de la tablette dans l'EXIF. L'orientation EXIF est
+    appliquée aux pixels avant de disparaître, sans quoi la photo s'afficherait
+    couchée.
+
+    `JPEG` pour les photos de pièce, y compris le HEIC, que les navigateurs du
+    dashboard n'affichent pas. `PNG` pour les signatures, qui gardent leur
+    transparence. Retourne les octets et l'extension à stocker. Opération CPU :
+    à appeler hors de la boucle asyncio.
+    """
+    inspecter_image(content)
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            redressee = ImageOps.exif_transpose(image)
+            if sortie == "JPEG":
+                pixels = redressee.convert("RGB")
+                options: dict[str, object] = {"quality": 90, "optimize": True}
+            else:
+                pixels = redressee.convert("RGBA")
+                options = {"optimize": True}
+            tampon = io.BytesIO()
+            pixels.save(tampon, format=sortie, **options)
+    except OSError as exc:
+        # Image tronquée ou corrompue : Pillow échoue au décodage, pas à l'ouverture.
+        raise UnsupportedImageError("Cette image n'a pas pu être décodée.") from exc
+    return tampon.getvalue(), _EXTENSIONS_SORTIE[sortie]
 
 
 def normalize_logo(content: bytes) -> bytes:

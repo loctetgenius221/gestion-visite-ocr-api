@@ -615,7 +615,9 @@ class ReferentielImportService:
         exactement le genre d'erreur qu'on ne veut pas découvrir après coup.
         """
         resolue = await organization_for_write(self.session, organization_id, actor)
-        assert resolue is not None  # `obligatoire=True` : la fonction a déjà levé sinon.
+        # `obligatoire=True` : la fonction a déjà levé sinon.
+        if resolue is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : resolue est None.")
         organization = await self.organizations.get_by_id(resolue)
         if organization is None:
             raise OrganizationNotFoundError(details={"organization_id": str(resolue)})

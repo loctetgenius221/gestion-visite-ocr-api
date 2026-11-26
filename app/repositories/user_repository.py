@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any, cast
 
-from sqlalchemy import Select, delete, func, or_, select
+from sqlalchemy import Select, delete, func, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
+from app.core.recherche import ECHAPPEMENT, motif_contient
 from app.models.enums import UserRole, UserStatus
 from app.models.refresh_token import RevokedToken
 from app.models.user import User
@@ -33,6 +37,25 @@ class UserRepository:
 
     create = add
 
+    async def incrementer_echecs(self, user: User) -> int:
+        """Ajoute un échec de connexion **en base**, et retourne le nouveau total.
+
+        `failed_login_attempts = failed_login_attempts + 1` est atomique : deux
+        requêtes simultanées comptent bien deux échecs. La valeur est reportée
+        sur l'instance sans la marquer modifiée, pour qu'un flush ultérieur ne
+        réécrive pas une valeur périmée par-dessus celle d'une autre requête.
+        """
+        stmt = (
+            update(User)
+            .where(User.id == user.id)
+            .values(failed_login_attempts=User.failed_login_attempts + 1)
+            .returning(User.failed_login_attempts)
+            .execution_options(synchronize_session=False)
+        )
+        tentatives = (await self.session.execute(stmt)).scalar_one()
+        set_committed_value(user, "failed_login_attempts", tentatives)
+        return tentatives
+
     async def list_by_organization_and_roles(
         self, organization_id: uuid.UUID, *, roles: tuple[UserRole, ...]
     ) -> list[User]:
@@ -57,11 +80,11 @@ class UserRepository:
         if filters.status is not None:
             stmt = stmt.where(User.is_active.is_(filters.status is UserStatus.ACTIVE))
         if filters.search:
-            pattern = f"%{filters.search.strip().lower()}%"
+            pattern = motif_contient(filters.search.strip().lower())
             stmt = stmt.where(
                 or_(
-                    func.lower(User.nom).like(pattern),
-                    func.lower(User.identifiant).like(pattern),
+                    func.lower(User.nom).like(pattern, escape=ECHAPPEMENT),
+                    func.lower(User.identifiant).like(pattern, escape=ECHAPPEMENT),
                 )
             )
         return stmt
@@ -122,7 +145,7 @@ class RevokedTokenRepository:
     async def purge_expired(self) -> int:
         """Supprime les entrées dont le token est de toute façon expiré."""
         stmt = delete(RevokedToken).where(RevokedToken.expires_at < datetime.now(UTC))
-        result = await self.session.execute(stmt)
+        result = cast("CursorResult[Any]", await self.session.execute(stmt))
         return result.rowcount or 0
 
 
@@ -247,5 +270,5 @@ class UserSessionRepository:
                 UserSession.revoked_at < revoked_before,
             )
         )
-        result = await self.session.execute(stmt)
+        result = cast("CursorResult[Any]", await self.session.execute(stmt))
         return result.rowcount or 0

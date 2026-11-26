@@ -86,6 +86,19 @@ class TestUploadSignature:
         assert response.status_code == 400
         assert response.json()["error_code"] == "UNSUPPORTED_IMAGE"
 
+    async def test_un_contenu_qui_nest_pas_une_image_renvoie_400(
+        self, client: AsyncClient, seeded: dict, auth_headers: dict
+    ):
+        """Audit SEC-007 : l'extension ne suffit plus, le contenu est décodé."""
+        response = await client.post(
+            "/uploads/signature",
+            files={"signature": ("signature.png", b"<html><script></script></html>", "image/png")},
+            headers=auth_headers,
+        )
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "UNSUPPORTED_IMAGE"
+
     async def test_fichier_vide_renvoie_400(
         self, client: AsyncClient, seeded: dict, auth_headers: dict
     ):

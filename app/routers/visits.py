@@ -13,7 +13,9 @@ from app.core.deps import (
     CurrentUser,
     OrganizationFilter,
     Scope,
+    VisitAdminServiceDep,
     VisitServiceDep,
+    VisitSyncServiceDep,
 )
 from app.core.routing import StrictQueryParamsRoute
 from app.models.enums import CheckoutOrigin, VisitStatus
@@ -124,7 +126,7 @@ async def list_visits(
     summary="Synchronisation batch des visites créées hors-ligne",
 )
 async def sync_visits(
-    payload: VisitSyncRequest, service: VisitServiceDep, scope: Scope
+    payload: VisitSyncRequest, service: VisitSyncServiceDep, scope: Scope
 ) -> VisitSyncResponse:
     """Entrées (`visits`) et sorties (`checkouts`) saisies hors-ligne (ADR-025).
 
@@ -148,7 +150,7 @@ async def sync_visits(
     },
 )
 async def export_visits(
-    service: VisitServiceDep,
+    service: VisitAdminServiceDep,
     scope: AdminScope,
     filters: Annotated[VisitFilters, Depends(get_visit_filters)],
     export_format: ExportFormat = Query(
@@ -220,7 +222,7 @@ async def checkout_visit(
 async def update_visit(
     visit_id: uuid.UUID,
     payload: VisitUpdate,
-    service: VisitServiceDep,
+    service: VisitAdminServiceDep,
     current_admin: AdminUser,
 ) -> VisitRead:
     """Correction d'une erreur de saisie. Le champ `reason` est obligatoire : il part
@@ -239,7 +241,7 @@ async def update_visit(
 async def cancel_visit(
     visit_id: uuid.UUID,
     payload: VisitCancelRequest,
-    service: VisitServiceDep,
+    service: VisitAdminServiceDep,
     current_admin: AdminUser,
 ) -> VisitRead:
     """Annulation **logique** : la visite passe en `ANNULEE` et reste en base pour
@@ -256,7 +258,7 @@ async def cancel_visit(
 )
 async def delete_visit(
     visit_id: uuid.UUID,
-    service: VisitServiceDep,
+    service: VisitAdminServiceDep,
     current_admin: AdminUser,
 ) -> None:
     """Suppression **physique** : la visite quitte le registre pour de bon.

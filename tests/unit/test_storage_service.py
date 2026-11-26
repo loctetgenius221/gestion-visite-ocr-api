@@ -81,3 +81,71 @@ class TestLocalStorage:
 
         assert cible.exists()
         cible.unlink()
+
+
+def _jpeg_avec_gps(largeur: int = 40, hauteur: int = 20) -> bytes:
+    import io
+
+    from PIL import Image
+
+    image = Image.new("RGB", (largeur, hauteur), "white")
+    exif = Image.Exif()
+    # 0x8825 : bloc GPS. 0x0112 : orientation (6 = à pivoter de 90° horaire).
+    exif[0x0112] = 6
+    exif.get_ifd(0x8825)[2] = (14.0, 41.0, 30.0)
+    tampon = io.BytesIO()
+    image.save(tampon, format="JPEG", exif=exif)
+    return tampon.getvalue()
+
+
+class TestNormalisationPhoto:
+    """Audit SEC-007 et SEC-008 : contenu vérifié, métadonnées retirées, pixels bornés."""
+
+    def test_un_document_html_renomme_en_png_est_refuse(self):
+        from app.services.storage_service import normaliser_photo
+
+        with pytest.raises(UnsupportedImageError):
+            normaliser_photo(b"<html><script>alert(1)</script></html>", "PNG")
+
+    def test_lexif_et_la_position_gps_sont_retires(self):
+        import io
+
+        from PIL import Image
+
+        from app.services.storage_service import normaliser_photo
+
+        source = _jpeg_avec_gps()
+        assert Image.open(io.BytesIO(source)).getexif()
+
+        sortie, extension = normaliser_photo(source, "JPEG")
+
+        assert extension == ".jpg"
+        with Image.open(io.BytesIO(sortie)) as image:
+            assert not image.getexif()
+            # L'orientation a été appliquée aux pixels avant de disparaître.
+            assert image.size == (20, 40)
+
+    def test_une_signature_reste_un_png_transparent(self):
+        import io
+
+        from PIL import Image
+
+        from app.services.storage_service import normaliser_photo
+
+        tampon = io.BytesIO()
+        Image.new("RGBA", (30, 10), (0, 0, 0, 0)).save(tampon, format="PNG")
+
+        sortie, extension = normaliser_photo(tampon.getvalue(), "PNG")
+
+        assert extension == ".png"
+        assert Image.open(io.BytesIO(sortie)).mode == "RGBA"
+
+    def test_une_image_trop_grande_en_pixels_est_refusee_avant_decodage(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from app.services import storage_service
+
+        monkeypatch.setattr(storage_service.settings, "MAX_IMAGE_MEGAPIXELS", 1)
+        # 2 000 × 1 000 pixels unis : quelques Ko compressés, 2 Mpx décodés.
+        with pytest.raises(FileTooLargeError):
+            storage_service.inspecter_image(_jpeg_avec_gps(2000, 1000))
