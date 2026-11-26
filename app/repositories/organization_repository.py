@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from sqlalchemy import Select, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.recherche import ECHAPPEMENT, motif_contient
 from app.models.enums import UserRole, VisitStatus
 from app.models.organization import Organization
 from app.models.referentiel import Agent, Service
@@ -53,12 +54,12 @@ class OrganizationRepository:
         if filters.is_active is not None:
             stmt = stmt.where(Organization.is_active.is_(filters.is_active))
         if filters.search:
-            motif = f"%{filters.search.strip()}%"
+            motif = motif_contient(filters.search.strip())
             stmt = stmt.where(
                 or_(
-                    Organization.nom.ilike(motif),
-                    Organization.code.ilike(motif),
-                    Organization.localisation.ilike(motif),
+                    Organization.nom.ilike(motif, escape=ECHAPPEMENT),
+                    Organization.code.ilike(motif, escape=ECHAPPEMENT),
+                    Organization.localisation.ilike(motif, escape=ECHAPPEMENT),
                 )
             )
         if filters.organization_id is not None:

@@ -222,3 +222,22 @@ async def test_sec009_une_tablette_hors_ligne_quelques_jours_se_synchronise(
     reponse = await client.post("/visits", json=payload, headers=auth_headers)
 
     assert reponse.status_code == 201, reponse.text
+
+
+async def test_sec013_les_jokers_saisis_ne_listent_pas_tout(
+    client: AsyncClient, seeded: dict, admin_headers: dict[str, str]
+) -> None:
+    """`%%%` et `___` sont cherchés tels quels, pas comme des jokers SQL."""
+    tous = await client.get("/users", headers=admin_headers)
+    assert tous.json()["total"] > 0
+
+    for terme in ("%%%", "___"):
+        reponse = await client.get("/users", params={"search": terme}, headers=admin_headers)
+        assert reponse.status_code == 200, reponse.text
+        assert reponse.json()["total"] == 0
+
+
+def test_sec013_motif_echappe() -> None:
+    from app.core.recherche import motif_contient
+
+    assert motif_contient(r"a%b_c\d") == r"%a\%b\_c\\d%"

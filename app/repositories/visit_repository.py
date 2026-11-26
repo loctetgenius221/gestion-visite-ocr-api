@@ -9,6 +9,7 @@ from sqlalchemy import ColumnElement, Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from app.core.recherche import ECHAPPEMENT, motif_contient
 from app.models.enums import DocumentType, VisitStatus
 from app.models.referentiel import Agent, Purpose, Service
 from app.models.visit import Visit
@@ -78,10 +79,10 @@ class VisitorRepository:
         imprimés par blocs (« 2 K05 2012 00108 ») et l'agent les recopie avec leurs
         espaces, alors que la base les stocke sans séparateurs (ADR-016).
         """
-        motif = f"%{terme.strip().lower()}%"
+        motif = motif_contient(terme.strip().lower())
         clauses = [
-            func.lower(Visitor.nom).like(motif),
-            func.lower(Visitor.prenom).like(motif),
+            func.lower(Visitor.nom).like(motif, escape=ECHAPPEMENT),
+            func.lower(Visitor.prenom).like(motif, escape=ECHAPPEMENT),
         ]
 
         compacte = re.sub(r"[^a-z0-9]", "", terme.lower())
@@ -243,12 +244,12 @@ class VisitRepository:
         if filters.created_by is not None:
             stmt = stmt.where(Visit.checked_in_by == filters.created_by)
         if filters.search:
-            pattern = f"%{filters.search.strip().lower()}%"
+            pattern = motif_contient(filters.search.strip().lower())
             stmt = stmt.join(Visitor, Visit.visitor_id == Visitor.id).where(
                 or_(
-                    func.lower(Visitor.nom).like(pattern),
-                    func.lower(Visitor.prenom).like(pattern),
-                    func.lower(Visitor.numero_document).like(pattern),
+                    func.lower(Visitor.nom).like(pattern, escape=ECHAPPEMENT),
+                    func.lower(Visitor.prenom).like(pattern, escape=ECHAPPEMENT),
+                    func.lower(Visitor.numero_document).like(pattern, escape=ECHAPPEMENT),
                 )
             )
         return stmt

@@ -7,6 +7,7 @@ from sqlalchemy import Select, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
+from app.core.recherche import ECHAPPEMENT, motif_contient
 from app.models.enums import UserRole, UserStatus
 from app.models.refresh_token import RevokedToken
 from app.models.user import User
@@ -77,11 +78,11 @@ class UserRepository:
         if filters.status is not None:
             stmt = stmt.where(User.is_active.is_(filters.status is UserStatus.ACTIVE))
         if filters.search:
-            pattern = f"%{filters.search.strip().lower()}%"
+            pattern = motif_contient(filters.search.strip().lower())
             stmt = stmt.where(
                 or_(
-                    func.lower(User.nom).like(pattern),
-                    func.lower(User.identifiant).like(pattern),
+                    func.lower(User.nom).like(pattern, escape=ECHAPPEMENT),
+                    func.lower(User.identifiant).like(pattern, escape=ECHAPPEMENT),
                 )
             )
         return stmt
