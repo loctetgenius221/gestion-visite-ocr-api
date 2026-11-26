@@ -106,6 +106,10 @@ class Settings(BaseSettings):
     # d'une visite : il suffit qu'elle couvre le temps d'affichage d'un écran.
     STORAGE_URL_TTL_SECONDS: int = 3600
     MAX_UPLOAD_SIZE_MB: int = 10
+    # Borne en pixels, lue dans l'en-tête **avant** décodage. 10 Mo de PNG
+    # uniforme se décompressent en plusieurs Go : la taille du fichier ne protège
+    # pas la mémoire. 50 Mpx couvrent les capteurs de téléphone courants.
+    MAX_IMAGE_MEGAPIXELS: int = 50
     # Un logo est une image d'interface, pas une photo de pièce : le plafond des
     # uploads MRZ y serait dix fois trop large, et un fichier accepté est un
     # fichier stocké puis servi à chaque chargement du dashboard.
@@ -128,6 +132,10 @@ class Settings(BaseSettings):
     OCR_PRELOAD_MODEL: bool = True
     # Bande verticale du document dans laquelle chercher le MRZ (ratio de la hauteur).
     OCR_MRZ_BAND_TOP_RATIO: float = 0.5
+    # Scans traités en même temps par worker. L'inférence est déjà sérialisée par
+    # le moteur ; la borne vaut pour le décodage et le prétraitement, qui
+    # tiennent chacun plusieurs copies de l'image en mémoire.
+    OCR_MAX_CONCURRENCY: int = 2
 
     @field_validator("ENABLE_DOCS", "SERVE_STORAGE", mode="before")
     @classmethod
