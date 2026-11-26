@@ -3,8 +3,9 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, delete, func, or_, select
+from sqlalchemy import Select, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models.enums import UserRole, UserStatus
 from app.models.refresh_token import RevokedToken
@@ -32,6 +33,25 @@ class UserRepository:
         return user
 
     create = add
+
+    async def incrementer_echecs(self, user: User) -> int:
+        """Ajoute un échec de connexion **en base**, et retourne le nouveau total.
+
+        `failed_login_attempts = failed_login_attempts + 1` est atomique : deux
+        requêtes simultanées comptent bien deux échecs. La valeur est reportée
+        sur l'instance sans la marquer modifiée, pour qu'un flush ultérieur ne
+        réécrive pas une valeur périmée par-dessus celle d'une autre requête.
+        """
+        stmt = (
+            update(User)
+            .where(User.id == user.id)
+            .values(failed_login_attempts=User.failed_login_attempts + 1)
+            .returning(User.failed_login_attempts)
+            .execution_options(synchronize_session=False)
+        )
+        tentatives = (await self.session.execute(stmt)).scalar_one()
+        set_committed_value(user, "failed_login_attempts", tentatives)
+        return tentatives
 
     async def list_by_organization_and_roles(
         self, organization_id: uuid.UUID, *, roles: tuple[UserRole, ...]

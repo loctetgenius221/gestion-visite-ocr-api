@@ -72,8 +72,8 @@ class LockedAccountError(UnauthorizedError):
 
     Volontairement un 401 et non un 423 : la réponse est renvoyée à un appelant
     **non authentifié**, et le code d'erreur suffit au client pour afficher le
-    bon message. Le compte n'est pas révélé comme existant pour autant — voir
-    `AuthService.authenticate`.
+    bon message. Il n'est renvoyé qu'avec le **bon** mot de passe : sans lui, un
+    compte verrouillé répond comme un compte inconnu (`AuthService.authenticate`).
     """
 
     error_code = "LOCKED_ACCOUNT"

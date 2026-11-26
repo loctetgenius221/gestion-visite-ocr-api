@@ -79,13 +79,23 @@ class AuthService:
             await self._tracer_echec(identifiant, raison="compte_inconnu")
             raise InvalidCredentialsError()
 
+        # Le mot de passe est vérifié **avant** le verrouillage (audit SEC-005).
+        # Sinon un compte verrouillé répondait `LOCKED_ACCOUNT` à n'importe quel
+        # mot de passe, alors qu'un compte inconnu répond `INVALID_CREDENTIALS` :
+        # cinq essais suffisaient à savoir qu'un identifiant existe. Seul le
+        # titulaire, qui connaît son mot de passe, apprend que son compte est
+        # verrouillé.
+        mot_de_passe_ok = verify_password(mot_de_passe, user.mot_de_passe_hash)
+
         if user.is_locked(maintenant):
             await self._tracer_echec(
                 identifiant, raison="compte_verrouille", user=user, action=AuditAction.LOGIN_LOCKED
             )
-            raise LockedAccountError(details={"locked_until": user.locked_until})
+            if mot_de_passe_ok:
+                raise LockedAccountError(details={"locked_until": user.locked_until})
+            raise InvalidCredentialsError()
 
-        if not verify_password(mot_de_passe, user.mot_de_passe_hash):
+        if not mot_de_passe_ok:
             await self._enregistrer_echec(user)
             raise InvalidCredentialsError()
 
@@ -150,9 +160,12 @@ class AuthService:
         jamais.
         """
         parametres = await self.settings_service.get_settings()
-        user.failed_login_attempts += 1
+        # Incrément en base, pas en Python (audit SEC-006) : des tentatives
+        # simultanées lisaient toutes la même valeur, et n'ajoutaient qu'une
+        # unité à elles toutes.
+        tentatives = await self.users.incrementer_echecs(user)
 
-        verrouille = user.failed_login_attempts >= parametres.max_failed_login_attempts
+        verrouille = tentatives >= parametres.max_failed_login_attempts
         if verrouille:
             user.locked_until = datetime.now(UTC) + timedelta(
                 minutes=parametres.account_lockout_minutes
@@ -162,7 +175,7 @@ class AuthService:
             "Echec d'authentification",
             extra={
                 "identifiant": user.identifiant,
-                "tentatives": user.failed_login_attempts,
+                "tentatives": tentatives,
                 "verrouille": verrouille,
             },
         )
@@ -172,7 +185,7 @@ class AuthService:
             entity_id=user.id,
             actor_identifiant=user.identifiant,
             metadata={
-                "tentatives": user.failed_login_attempts,
+                "tentatives": tentatives,
                 "compte_verrouille": verrouille,
             },
             context=self.context,

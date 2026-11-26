@@ -8,9 +8,9 @@ le marqueur pour en faire un test de non-régression.
 
 from __future__ import annotations
 
-import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 # SEC-001 : fiche visiteur globale lue et réécrite depuis une autre organisation.
 # Corrigé par la fiche par organisation (ADR-026) ; ces tests sont des tests de
@@ -81,7 +81,8 @@ async def test_sec001_une_autre_organisation_ne_reecrit_pas_lidentite_du_registr
     assert reponse.json()["visitor"]["nom"] == "Ndoye"
 
 
-SEC_005 = "SEC-005 : le verrouillage révèle l'existence du compte et se déclenche à distance"
+# SEC-005 : le verrouillage révélait l'existence du compte. Corrigé en vérifiant
+# le mot de passe avant le verrou (non-régression).
 
 
 async def _six_echecs(client: AsyncClient, identifiant: str) -> dict:
@@ -94,7 +95,6 @@ async def _six_echecs(client: AsyncClient, identifiant: str) -> dict:
     return reponse.json()
 
 
-@pytest.mark.xfail(strict=True, reason=SEC_005)
 async def test_sec005_compte_verrouille_et_compte_inconnu_repondent_pareil(
     client: AsyncClient, seeded: dict
 ) -> None:
@@ -103,6 +103,38 @@ async def test_sec005_compte_verrouille_et_compte_inconnu_repondent_pareil(
     inconnu = await _six_echecs(client, "personne-ici")
 
     assert existant["error_code"] == inconnu["error_code"]
+
+
+async def test_sec005_le_titulaire_apprend_que_son_compte_est_verrouille(
+    client: AsyncClient, seeded: dict
+) -> None:
+    await _six_echecs(client, "agent001")
+
+    reponse = await client.post(
+        "/auth/login", json={"identifiant": "agent001", "mot_de_passe": "MotDePasse123!"}
+    )
+
+    assert reponse.json()["error_code"] == "LOCKED_ACCOUNT"
+
+
+async def test_sec006_lincrement_des_echecs_ne_repart_pas_dune_valeur_perimee(
+    session: AsyncSession, seeded: dict
+) -> None:
+    """Deux requêtes simultanées lisent la même valeur : chacune doit compter."""
+    from app.repositories.user_repository import UserRepository
+
+    depot = UserRepository(session)
+    utilisateur = await depot.get_by_identifiant("agent001")
+    assert utilisateur is not None
+    depart = utilisateur.failed_login_attempts
+
+    assert await depot.incrementer_echecs(utilisateur) == depart + 1
+    # Une requête concurrente a lu le compteur avant ce premier incrément : son
+    # instance porte encore l'ancienne valeur. Un `+= 1` en Python écrirait
+    # `depart + 1` une seconde fois.
+    set_committed_value(utilisateur, "failed_login_attempts", depart)
+
+    assert await depot.incrementer_echecs(utilisateur) == depart + 2
 
 
 # SEC-004 : le jeton d'accès survivait à la déconnexion et à la révocation de
