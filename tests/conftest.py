@@ -16,6 +16,9 @@ os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET_KEY", "test-secret-key")
 os.environ.setdefault("OCR_PRELOAD_MODEL", "false")
 os.environ.setdefault("LOG_LEVEL", "WARNING")
+# Coût minimal de bcrypt : la sécurité du hachage n'est pas ce que la suite
+# vérifie, et le coût de production (12) la rendait 10 fois plus lente.
+os.environ.setdefault("BCRYPT_ROUNDS", "4")
 
 import pytest  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402

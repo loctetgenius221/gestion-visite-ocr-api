@@ -25,7 +25,7 @@ def hash_password(password: str) -> str:
     incompatible avec bcrypt >= 4.1 (détection de backend cassée). Voir ADR-003.
     """
     payload = password.encode("utf-8")[:_BCRYPT_MAX_BYTES]
-    return bcrypt.hashpw(payload, bcrypt.gensalt()).decode("utf-8")
+    return bcrypt.hashpw(payload, bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)).decode("utf-8")
 
 
 def verify_password(password: str, hashed: str) -> bool:

@@ -14,6 +14,8 @@ SAFE_PRODUCTION = {
     "CORS_ORIGINS": "https://app.exemple.sn",
     "DATABASE_URL": "postgresql+asyncpg://sigv:motdepasse@db:5432/sigv",
     "STORAGE_URL_SIGNING_KEY": "s" * 48,
+    # La suite tourne avec BCRYPT_ROUNDS=4 dans l'environnement (conftest).
+    "BCRYPT_ROUNDS": 12,
 }
 
 
@@ -38,6 +40,7 @@ def test_production_accepte_une_configuration_saine() -> None:
         ({"STORAGE_URL_SIGNING_KEY": ""}, "STORAGE_URL_SIGNING_KEY"),
         ({"STORAGE_URL_SIGNING_KEY": "courte"}, "STORAGE_URL_SIGNING_KEY"),
         ({"JWT_SECRET_KEY_PREVIOUS": "courte"}, "JWT_SECRET_KEY_PREVIOUS"),
+        ({"BCRYPT_ROUNDS": 4}, "BCRYPT_ROUNDS"),
     ],
 )
 def test_production_refuse_les_reglages_de_developpement(

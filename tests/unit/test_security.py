@@ -36,6 +36,17 @@ class TestHashage:
         long = "a" * 200
         assert verify_password(long, hash_password(long))
 
+    def test_le_cout_vient_de_la_configuration(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setattr(settings, "BCRYPT_ROUNDS", 5)
+        assert hash_password("x").startswith("$2b$05$")
+
+    def test_un_hash_dun_autre_cout_reste_verifiable(self, monkeypatch: pytest.MonkeyPatch):
+        """Changer BCRYPT_ROUNDS ne doit invalider aucun mot de passe existant."""
+        monkeypatch.setattr(settings, "BCRYPT_ROUNDS", 6)
+        ancien = hash_password("MotDePasse123!")
+        monkeypatch.setattr(settings, "BCRYPT_ROUNDS", 4)
+        assert verify_password("MotDePasse123!", ancien)
+
     def test_hash_malforme_est_rejete_sans_exception(self):
         assert not verify_password("peu importe", "pas-un-hash-bcrypt")
 

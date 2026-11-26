@@ -8,6 +8,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Valeur livrée dans `.env.example` : utilisable en développement, jamais en production.
 DEV_JWT_SECRET = "changeme-dev-secret-key"
 MIN_JWT_SECRET_LENGTH = 32
+# Coût bcrypt minimal accepté en production (2^12 itérations, ~0,3 s par hachage).
+MIN_BCRYPT_ROUNDS = 12
 
 
 class Settings(BaseSettings):
@@ -69,6 +71,11 @@ class Settings(BaseSettings):
     # régulièrement n'est donc jamais déconnecté ; un appareil laissé de côté voit
     # sa session expirer d'elle-même. Voir ADR-015.
     REFRESH_TOKEN_SLIDING: bool = True
+    # Coût bcrypt des nouveaux hachages (2^N itérations). La vérification lit le
+    # coût inscrit dans le hachage : changer la valeur n'invalide aucun mot de
+    # passe existant. Les tests le baissent à 4 (minimum de bcrypt), sans quoi
+    # chaque fixture coûte 0,3 s ; la production refuse moins de 12.
+    BCRYPT_ROUNDS: int = MIN_BCRYPT_ROUNDS
 
     # --- CORS ---
     # Origines autorisées, séparées par des virgules (ex: "http://localhost:3000,https://app.example.com")
@@ -199,6 +206,8 @@ class Settings(BaseSettings):
             problems.append(
                 f"JWT_SECRET_KEY_PREVIOUS doit faire au moins {MIN_JWT_SECRET_LENGTH} caractères"
             )
+        if self.BCRYPT_ROUNDS < MIN_BCRYPT_ROUNDS:
+            problems.append(f"BCRYPT_ROUNDS doit valoir au moins {MIN_BCRYPT_ROUNDS}")
         if len(self.STORAGE_URL_SIGNING_KEY) < MIN_JWT_SECRET_LENGTH:
             problems.append(
                 "STORAGE_URL_SIGNING_KEY est obligatoire (au moins "
