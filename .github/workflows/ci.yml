@@ -42,7 +42,7 @@ jobs:
         run: uv sync --frozen
 
       - name: Lint
-        run: uv run ruff check app tests
+        run: uv run ruff check .
 
       - name: Typage
         run: uv run mypy app

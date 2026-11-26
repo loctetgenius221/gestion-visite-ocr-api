@@ -50,6 +50,11 @@ ignore = [
     "UP046",
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# Migrations générées par `alembic revision --autogenerate` : leur style suit le
+# générateur, et une migration déjà appliquée ne se réécrit pas pour le lint.
+"alembic/versions/*" = ["E501", "UP007", "UP035", "I001"]
+
 [tool.coverage.run]
 source = ["app"]
 # SQLAlchemy async exécute l'ORM dans des greenlets : sans ce réglage, tout le code
