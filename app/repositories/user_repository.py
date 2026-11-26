@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from sqlalchemy import Select, delete, func, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import set_committed_value
 
@@ -143,7 +145,7 @@ class RevokedTokenRepository:
     async def purge_expired(self) -> int:
         """Supprime les entrées dont le token est de toute façon expiré."""
         stmt = delete(RevokedToken).where(RevokedToken.expires_at < datetime.now(UTC))
-        result = await self.session.execute(stmt)
+        result = cast("CursorResult[Any]", await self.session.execute(stmt))
         return result.rowcount or 0
 
 
@@ -268,5 +270,5 @@ class UserSessionRepository:
                 UserSession.revoked_at < revoked_before,
             )
         )
-        result = await self.session.execute(stmt)
+        result = cast("CursorResult[Any]", await self.session.execute(stmt))
         return result.rowcount or 0

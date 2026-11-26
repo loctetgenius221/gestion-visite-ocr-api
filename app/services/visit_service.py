@@ -120,7 +120,8 @@ class VisitService:
                 await self.session.refresh(current_user)
 
         refreshed = await self.visits.get_by_id(visit.id)
-        assert refreshed is not None
+        if refreshed is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : refreshed est None.")
         return refreshed
 
     async def _build_visit(self, payload: VisitCreate, user_id: uuid.UUID) -> Visit:
@@ -247,7 +248,8 @@ class VisitService:
         pour ne pas confirmer qu'elle existe ailleurs.
         """
         if payload.visitor_id is None:
-            assert payload.visitor is not None
+            if payload.visitor is None:  # invariant : un `assert` disparaît sous `python -O`
+                raise RuntimeError("Invariant violé : payload.visitor est None.")
             return await self._upsert_visitor(payload.visitor, organisation)
 
         visitor = await self.visitors.get_by_id(payload.visitor_id)
@@ -414,7 +416,8 @@ class VisitService:
         await self.session.commit()
 
         refreshed = await self.visits.get_by_id(visit.id)
-        assert refreshed is not None
+        if refreshed is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : refreshed est None.")
         return refreshed
 
     # --- Administration (rôle ADMIN) -----------------------------------------
@@ -479,7 +482,8 @@ class VisitService:
         await self.session.commit()
 
         refreshed = await self.visits.get_by_id(visit.id)
-        assert refreshed is not None
+        if refreshed is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : refreshed est None.")
         return refreshed
 
     async def cancel_visit(self, visit_id: uuid.UUID, reason: str, current_user: User) -> Visit:
@@ -504,7 +508,8 @@ class VisitService:
         await self.session.commit()
 
         refreshed = await self.visits.get_by_id(visit.id)
-        assert refreshed is not None
+        if refreshed is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : refreshed est None.")
         return refreshed
 
     async def delete_visit(self, visit_id: uuid.UUID, current_user: User) -> None:
@@ -866,7 +871,7 @@ class VisitService:
                 },
             )
 
-        resultat = {
+        resultat: dict[str, Any] = {
             "index": index,
             "visit_id": visit.id,
             "client_reference": sortie.client_reference or visit.client_reference,
@@ -927,7 +932,8 @@ class VisitService:
                 raise CrossOrganizationError("Accès limité aux visites de votre organisation.")
             return visit
 
-        assert sortie.client_reference is not None
+        if sortie.client_reference is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : sortie.client_reference est None.")
         if organisation is None:
             # La référence n'est unique qu'au sein d'une organisation.
             raise BadRequestError(

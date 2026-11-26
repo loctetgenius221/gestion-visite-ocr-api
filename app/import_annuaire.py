@@ -422,7 +422,8 @@ async def appliquer(
     await session.flush()
 
     for plan, agent in a_creer:
-        assert plan.existant is not None
+        if plan.existant is None:  # invariant : un `assert` disparaît sous `python -O`
+            raise RuntimeError("Invariant violé : plan.existant est None.")
         agent.service_id = plan.existant.id
         session.add(agent)
 
