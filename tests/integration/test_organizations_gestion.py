@@ -106,7 +106,8 @@ class TestActivation:
         seeded: dict,
     ) -> None:
         visiteur = Visitor(
-            prenom="Awa", nom="Diop", type_document="CNI", numero_document="1112223330"
+            prenom="Awa", nom="Diop", type_document="CNI", numero_document="1112223330",
+            organization_id=organization.id,
         )
         session.add(visiteur)
         await session.flush()

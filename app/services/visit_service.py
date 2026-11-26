@@ -240,17 +240,16 @@ class VisitService:
 
         `VisitCreate` garantit qu'une seule des deux sources est renseignée.
 
-        Une fiche ne se reprend par son identifiant que si la personne est déjà
-        venue dans l'organisation : c'est la règle de la recherche (ADR-020), qui
-        fournit ces identifiants. Le cas contraire répond comme une fiche
-        inexistante, pour ne pas confirmer qu'elle existe ailleurs.
+        Une fiche ne se reprend par son identifiant que dans l'organisation qui la
+        tient (ADR-026). Une fiche d'autrui répond comme une fiche inexistante,
+        pour ne pas confirmer qu'elle existe ailleurs.
         """
         if payload.visitor_id is None:
             assert payload.visitor is not None
-            return await self._upsert_visitor(payload.visitor)
+            return await self._upsert_visitor(payload.visitor, organisation)
 
         visitor = await self.visitors.get_by_id(payload.visitor_id)
-        if visitor is None or not await self.visits.visitor_has_visited(visitor.id, organisation):
+        if visitor is None or visitor.organization_id != organisation:
             raise VisitorNotFoundError(details={"visitor_id": str(payload.visitor_id)})
 
         if payload.visitor_passage is not None:
@@ -331,13 +330,20 @@ class VisitService:
             page_size=pagination.page_size,
         )
 
-    async def _upsert_visitor(self, data: VisitorInput) -> Visitor:
+    async def _upsert_visitor(self, data: VisitorInput, organisation: uuid.UUID) -> Visitor:
         """Réutilise le visiteur existant (même document) et rafraîchit ses coordonnées.
 
         Un même visiteur revient régulièrement au poste d'accueil : dupliquer sa fiche
         à chaque passage fausserait la recherche et l'historique.
+
+        La recherche et la mise à jour ne portent que sur les fiches de
+        l'organisation (ADR-026). Une fiche commune à tout le parc renvoyait à un
+        ministère le NIN et les photos saisis par un autre, et laissait chacun
+        réécrire l'identité figurant dans le registre des autres (SEC-001).
         """
-        existing = await self.visitors.get_by_document(data.type_document, data.numero_document)
+        existing = await self.visitors.get_by_document(
+            data.type_document, data.numero_document, organisation
+        )
         payload = data.model_dump(exclude_unset=False)
         if data.email is not None:
             payload["email"] = str(data.email)
@@ -350,7 +356,7 @@ class VisitService:
             await self.session.flush()
             return existing
 
-        return await self.visitors.add(Visitor(**payload))
+        return await self.visitors.add(Visitor(organization_id=organisation, **payload))
 
     async def get_visit(self, visit_id: uuid.UUID, current_user: User | None = None) -> Visit:
         visit = await self.visits.get_by_id(visit_id)

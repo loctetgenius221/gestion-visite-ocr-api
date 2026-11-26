@@ -898,6 +898,10 @@ structure, invisibles ensuite.
 
 ### La fiche visiteur reste commune, sa consultation ne l'est pas
 
+> **Remplacé par ADR-026** (audit du 26/11/2026). Cloisonner la consultation ne
+> suffisait pas : l'**écriture** passait par la fiche commune. Le texte ci-dessous
+> est conservé pour l'historique.
+
 Une même personne peut se présenter dans plusieurs ministères. Lui créer une fiche
 par organisation dupliquerait son identité — donc son numéro de pièce et son NIN —
 autant de fois qu'elle a d'interlocuteurs, et multiplierait d'autant la surface
@@ -1277,3 +1281,41 @@ résoudre un cas de plus.
 nouveaux statuts). C'est acceptable parce que l'app mobile est reconstruite, et que
 le dashboard n'appelle pas cette route. Une visite est attribuée au compte qui la
 synchronise. L'app doit donc synchroniser avant tout changement d'utilisateur.
+
+---
+
+## ADR-026 — La fiche visiteur appartient à l'organisation
+
+**Contexte.** ADR-020 gardait `Visitor` commun à tout le parc et cloisonnait la
+seule **consultation** (`GET /visitors`). L'audit du 26/11/2026 (SEC-001) a montré
+que l'**écriture** traversait ce cloisonnement. `POST /visits` et `/visits/sync`
+retrouvaient la fiche par `(type_document, numero_document)` sur tout le parc, la
+mettaient à jour et la renvoyaient. Un agent du ministère A qui saisissait le
+numéro de pièce d'une personne venue au port B recevait donc :
+- le NIN, le téléphone, l'e-mail et les photos de pièce saisis par B ;
+- et la preuve que la personne était venue chez B.
+
+Son nom réécrivait en outre l'identité affichée dans le registre de B.
+
+**Décision.** `visitors.organization_id`, avec l'unicité
+`(organization_id, type_document, numero_document)`. La fiche n'est cherchée,
+reprise (`visitor_id`) et mise à jour que dans l'organisation de l'appelant. Une
+fiche d'autrui répond comme une fiche inexistante.
+
+**Migration (`e9c4b7a2f310`).** Chaque fiche revient à l'organisation de sa
+première visite. Chaque autre organisation où la personne est venue en reçoit une
+copie, à laquelle ses visites et ses fiches de pièce oubliée sont rattachées. Une
+copie ne garde pas les photos rangées dans le dossier d'une autre organisation.
+Les autres champs (NIN, coordonnées) sont copiés tels quels, car on ne peut plus
+savoir qui les a saisis. Une fiche sans visite reste sans organisation : invisible
+de tous, elle est purgée avec ses pièces.
+
+**Ce qu'on perd.** Une personne venue dans trois structures a trois fiches. C'est
+la duplication que craignait ADR-020, mais chaque copie ne contient que ce que
+cette structure a saisi ou reçu. En contrepartie :
+- chaque client du SaaS peut exporter ou effacer ses données (RGPD, fin de
+  contrat) sans toucher à celles des autres ;
+- une erreur de saisie dans un ministère ne fausse plus le registre d'un autre.
+
+**Conséquence.** Une fiche dont l'unique visite est supprimée reste trouvable par
+son organisation, sans dernière venue.

@@ -25,10 +25,11 @@ class VisitorRepository:
         self.session = session
 
     async def get_by_document(
-        self, type_document: DocumentType, numero_document: str
+        self, type_document: DocumentType, numero_document: str, organization_id: uuid.UUID
     ) -> Visitor | None:
-        """Un visiteur est identifié par le couple (type de document, numéro de document)."""
+        """Un visiteur est identifié par sa pièce, **dans une organisation** (ADR-026)."""
         stmt = select(Visitor).where(
+            Visitor.organization_id == organization_id,
             Visitor.type_document == type_document,
             Visitor.numero_document == numero_document,
         )
@@ -94,22 +95,8 @@ class VisitorRepository:
 
     @staticmethod
     def _clause_organisation(organization_id: uuid.UUID) -> ColumnElement[bool]:
-        """Restreint aux visiteurs déjà venus dans l'organisation donnée.
-
-        `Visitor` reste volontairement **global** : une même personne peut se
-        présenter dans plusieurs structures, et lui créer une fiche par
-        organisation dupliquerait son identité — donc son numéro de pièce et son
-        NIN — autant de fois qu'elle a d'interlocuteurs. Le cloisonnement porte
-        donc sur le lien de visite, pas sur la fiche : on ne retrouve une personne
-        que si elle est déjà venue chez soi.
-        """
-        venue = aliased(Visit)
-        return (
-            select(venue.id)
-            .where(venue.visitor_id == Visitor.id, venue.organization_id == organization_id)
-            .correlate(Visitor)
-            .exists()
-        )
+        """Restreint aux fiches de l'organisation donnée (ADR-026)."""
+        return Visitor.organization_id == organization_id
 
     async def count_search(self, terme: str, *, organization_id: uuid.UUID | None = None) -> int:
         stmt = select(func.count(Visitor.id)).where(self._clause_recherche(terme))
@@ -232,15 +219,6 @@ class VisitRepository:
             Visit.statut == VisitStatus.PRESENT,
         )
         return (await self.session.execute(stmt)).unique().scalars().first()
-
-    async def visitor_has_visited(self, visitor_id: uuid.UUID, organization_id: uuid.UUID) -> bool:
-        """La personne est-elle déjà venue dans cette organisation ?"""
-        stmt = (
-            select(Visit.id)
-            .where(Visit.visitor_id == visitor_id, Visit.organization_id == organization_id)
-            .limit(1)
-        )
-        return (await self.session.execute(stmt)).first() is not None
 
     @staticmethod
     def _apply_filters(stmt: Select, filters: VisitFilters) -> Select:

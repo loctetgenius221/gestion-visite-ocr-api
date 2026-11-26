@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import uuid
 from datetime import date
 
-from sqlalchemy import Date, String, UniqueConstraint
+from sqlalchemy import Date, ForeignKey, String, UniqueConstraint, Uuid
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -15,13 +16,27 @@ class Visitor(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "visitors"
     __table_args__ = (
-        # ADR-010 : une personne = un couple (type, numéro de pièce). Sans la
-        # contrainte, deux synchronisations simultanées créaient deux fiches.
+        # ADR-010 : une personne = un couple (type, numéro de pièce) **dans une
+        # organisation** (ADR-026). Sans la contrainte, deux synchronisations
+        # simultanées créaient deux fiches.
         UniqueConstraint(
+            "organization_id",
             "type_document",
             "numero_document",
-            name="uq_visitors_type_document_numero_document",
+            name="uq_visitors_organization_id_type_document_numero_document",
         ),
+    )
+
+    # Chaque organisation tient ses propres fiches (ADR-026) : une saisie chez A
+    # ne lit ni ne réécrit jamais la fiche de la même personne chez B. Nullable
+    # pour les seules fiches orphelines d'avant la séparation (aucune visite à
+    # rattacher) : invisibles de toute organisation, elles disparaissent avec la
+    # purge des pièces.
+    organization_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True),
+        ForeignKey("organizations.id", ondelete="RESTRICT"),
+        nullable=True,
+        index=True,
     )
 
     prenom: Mapped[str] = mapped_column(String(150), nullable=False)

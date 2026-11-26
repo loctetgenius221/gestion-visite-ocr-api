@@ -42,6 +42,7 @@ async def _visiteur_avec_images(
         nom="Diop",
         type_document="CNI",
         numero_document=f"CNI{derniere_visite_il_y_a_jours:05d}",
+        organization_id=seeded["organization"].id,
         document_recto_url="/storage/uploads/documents/recto/r.png",
         document_verso_url="/storage/uploads/documents/verso/v.png",
         mrz_image_url="/storage/uploads/mrz/m.png",

@@ -174,6 +174,7 @@ async def voisine(
         nom="Ndoye",
         type_document=DocumentType.CNI,
         numero_document="PAD0000001",
+        organization_id=other_organization.id,
     )
     session.add_all([agent, visiteur])
     await session.flush()

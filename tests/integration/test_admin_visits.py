@@ -326,14 +326,8 @@ class TestSuppression:
     ) -> None:
         """Seule la visite est détruite : la fiche visiteur reste en base.
 
-        Elle sort en revanche de la recherche du poste, qui ne montre que les
-        personnes déjà venues **dans l'organisation** : sans visite, plus rien ne
-        rattache cette personne à la structure. C'est voulu — la fiche est commune
-        à toutes les organisations, et la rendre visible sans passage rendrait le
-        fichier des visiteurs consultable par n'importe quel poste.
-
-        La personne n'est pas perdue pour autant : à sa prochaine venue, le scan
-        de sa pièce retrouve la fiche existante par son numéro de document.
+        La fiche appartient à l'organisation (ADR-026) : elle reste trouvable par
+        son poste, sans dernière venue, et jamais par une autre structure.
         """
         from app.models.visitor import Visitor
 
@@ -345,7 +339,8 @@ class TestSuppression:
 
         recherche = await client.get("/visitors?search=Diop", headers=auth_headers)
         assert recherche.status_code == 200
-        assert recherche.json()["items"] == []
+        [fiche] = recherche.json()["items"]
+        assert fiche["derniere_visite_at"] is None
 
     async def test_la_visite_supprimee_sort_des_statistiques(
         self, client: AsyncClient, admin_headers: dict[str, str], auth_headers, seeded: dict

@@ -12,7 +12,9 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession
 
-SEC_001 = "SEC-001 : fiche visiteur globale lue et réécrite depuis une autre organisation"
+# SEC-001 : fiche visiteur globale lue et réécrite depuis une autre organisation.
+# Corrigé par la fiche par organisation (ADR-026) ; ces tests sont des tests de
+# non-régression.
 
 
 def _visite_par_saisie(service_id: str, numero: str) -> dict:
@@ -29,7 +31,6 @@ def _visite_par_saisie(service_id: str, numero: str) -> dict:
     }
 
 
-@pytest.mark.xfail(strict=True, reason=SEC_001)
 async def test_sec001_numero_de_piece_ne_revele_pas_la_fiche_dune_autre_organisation(
     client: AsyncClient,
     session: AsyncSession,
@@ -58,7 +59,6 @@ async def test_sec001_numero_de_piece_ne_revele_pas_la_fiche_dune_autre_organisa
     assert fiche.get("email") is None
 
 
-@pytest.mark.xfail(strict=True, reason=SEC_001)
 async def test_sec001_une_autre_organisation_ne_reecrit_pas_lidentite_du_registre(
     client: AsyncClient,
     session: AsyncSession,

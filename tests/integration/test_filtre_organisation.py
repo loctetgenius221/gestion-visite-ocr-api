@@ -41,6 +41,7 @@ async def visite_locale(session: AsyncSession, seeded: dict) -> Visit:
         nom="Faye",
         type_document=DocumentType.CNI,
         numero_document="MIN0000001",
+        organization_id=seeded["organization"].id,
     )
     session.add(visiteur)
     await session.flush()
