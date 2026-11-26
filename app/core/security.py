@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
 import bcrypt
-from jose import ExpiredSignatureError, JWTError, jwt
+import jwt
 
 from app.core.config import settings
 from app.core.errors import InvalidTokenError
@@ -102,15 +102,22 @@ def _decode_claims(token: str) -> dict[str, Any]:
     if settings.JWT_SECRET_KEY_PREVIOUS:
         cles.append(settings.JWT_SECRET_KEY_PREVIOUS)
 
-    derniere_erreur: JWTError | None = None
+    derniere_erreur: jwt.PyJWTError | None = None
     for cle in cles:
         try:
-            return jwt.decode(token, cle, algorithms=[settings.JWT_ALGORITHM])
-        except ExpiredSignatureError as exc:
+            # La liste d'algorithmes est fixée par la configuration, jamais lue
+            # dans l'en-tête du jeton : `none` et la confusion HS/RS sont exclus.
+            return jwt.decode(
+                token,
+                cle,
+                algorithms=[settings.JWT_ALGORITHM],
+                options={"require": ["exp", "sub", "jti", "type"]},
+            )
+        except jwt.ExpiredSignatureError as exc:
             # Signature reconnue mais jeton expiré : essayer l'autre clé ne
             # changerait rien.
             raise InvalidTokenError() from exc
-        except JWTError as exc:
+        except jwt.PyJWTError as exc:
             derniere_erreur = exc
     raise InvalidTokenError() from derniere_erreur
 

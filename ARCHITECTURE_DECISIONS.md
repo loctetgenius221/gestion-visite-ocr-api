@@ -79,6 +79,12 @@ le même (bcrypt, coût par défaut), et les hashes sont interopérables : un fu
 **Note.** La troncature à 72 octets est explicite dans `security.py` plutôt que
 silencieuse, et couverte par un test.
 
+**Mise à jour (audit du 26/11/2026).** `passlib` est retiré des dépendances, et
+`bcrypt` y figure directement. Le coût est réglé par `BCRYPT_ROUNDS` (12 minimum en
+production, 4 dans la suite de tests). Les JWT passent de `python-jose`, peu
+maintenu et porteur d'un avis sans correctif (GHSA-3qf3-8w2g-rqmx), à `PyJWT`.
+Le format des jetons est inchangé : aucune session n'est coupée par la migration.
+
 ---
 
 ## ADR-004 — Idempotence de la synchro offline par `client_reference`

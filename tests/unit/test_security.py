@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
+import jwt
 import pytest
-from jose import jwt
 
 from app.core.config import settings
 from app.core.errors import InvalidTokenError
@@ -78,7 +78,7 @@ class TestJwt:
     def test_signature_invalide_est_rejetee(self):
         token = jwt.encode(
             {"sub": "user-123", "type": "access", "jti": "x", "exp": 9999999999},
-            "mauvaise-cle",
+            "mauvaise-cle-de-32-octets-au-minimum",
             algorithm=settings.JWT_ALGORITHM,
         )
         with pytest.raises(InvalidTokenError):
@@ -104,6 +104,15 @@ class TestJwt:
             {"sub": "user-123", "exp": 9999999999},
             settings.JWT_SECRET_KEY,
             algorithm=settings.JWT_ALGORITHM,
+        )
+        with pytest.raises(InvalidTokenError):
+            decode_token(token)
+
+    def test_algorithme_none_est_rejete(self):
+        token = jwt.encode(
+            {"sub": "user-123", "type": "access", "jti": "x", "exp": 9999999999},
+            None,
+            algorithm="none",
         )
         with pytest.raises(InvalidTokenError):
             decode_token(token)
