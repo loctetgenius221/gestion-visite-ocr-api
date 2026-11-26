@@ -241,3 +241,52 @@ def test_sec013_motif_echappe() -> None:
     from app.core.recherche import motif_contient
 
     assert motif_contient(r"a%b_c\d") == r"%a\%b\_c\\d%"
+
+
+async def test_sec011_un_org_admin_ne_reinitialise_pas_un_pair(
+    client: AsyncClient,
+    session: AsyncSession,
+    seeded: dict,
+    org_admin_headers: dict[str, str],
+) -> None:
+    from app.core.security import hash_password
+    from app.models.enums import UserRole
+    from app.models.user import User
+
+    pair = User(
+        nom="Second administrateur",
+        identifiant="orgadmin002",
+        mot_de_passe_hash=hash_password("MotDePasse123!"),
+        role=UserRole.ORG_ADMIN,
+        organization_id=seeded["organization"].id,
+        is_active=True,
+    )
+    session.add(pair)
+    await session.commit()
+
+    reponse = await client.post(
+        f"/users/{pair.id}/reset-password", headers=org_admin_headers, json={}
+    )
+
+    assert reponse.status_code == 403, reponse.text
+    assert "mot_de_passe" not in reponse.json()
+
+
+async def test_sec011_ladministrateur_de_plateforme_le_peut(
+    client: AsyncClient, org_admin, admin_headers: dict[str, str]
+) -> None:
+    reponse = await client.post(
+        f"/users/{org_admin.id}/reset-password", headers=admin_headers, json={}
+    )
+
+    assert reponse.status_code == 200, reponse.text
+
+
+async def test_sec011_un_org_admin_reinitialise_toujours_un_agent(
+    client: AsyncClient, seeded: dict, org_admin_headers: dict[str, str]
+) -> None:
+    reponse = await client.post(
+        f"/users/{seeded['user'].id}/reset-password", headers=org_admin_headers, json={}
+    )
+
+    assert reponse.status_code == 200, reponse.text

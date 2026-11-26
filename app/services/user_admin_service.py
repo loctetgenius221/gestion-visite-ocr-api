@@ -222,8 +222,18 @@ class UserAdminService:
     async def reset_password(
         self, user_id: uuid.UUID, mot_de_passe: str | None, actor: User
     ) -> tuple[User, str | None]:
-        """Réinitialisation forcée. Toutes les sessions du compte sont coupées."""
+        """Réinitialisation forcée. Toutes les sessions du compte sont coupées.
+
+        Le compte d'un administrateur d'organisation ne se réinitialise que par
+        l'administrateur de plateforme (audit SEC-011). Sinon un ORG_ADMIN
+        recevait le mot de passe généré d'un pair, et prenait son compte.
+        """
         user = await self.get_user(user_id, actor)
+        if user.role is UserRole.ORG_ADMIN and actor.role is not UserRole.ADMIN:
+            raise InsufficientRoleError(
+                "Seul l'administrateur de la plateforme peut réinitialiser le mot de passe "
+                "d'un administrateur d'organisation."
+            )
 
         genere = mot_de_passe is None
         nouveau = mot_de_passe or generate_password()
