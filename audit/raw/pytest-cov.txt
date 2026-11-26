@@ -1,0 +1,109 @@
+........................................................................ [  9%]
+........................................................................ [ 19%]
+........................................................................ [ 29%]
+........................................................................ [ 39%]
+........................................................................ [ 49%]
+........................................................................ [ 59%]
+........................................................................ [ 69%]
+........................................................................ [ 79%]
+........................................................................ [ 89%]
+........................................................................ [ 98%]
+........                                                                 [100%]
+=============================== tests coverage ================================
+______________ coverage: platform win32, python 3.12.13-final-0 _______________
+
+Name                                                Stmts   Miss  Cover
+-----------------------------------------------------------------------
+app\__init__.py                                         0      0   100%
+app\auto_close_visits.py                               60     60     0%
+app\bootstrap.py                                       68     31    54%
+app\core\config.py                                    101      0   100%
+app\core\database.py                                   30     17    43%
+app\core\deps.py                                      117      2    98%
+app\core\deps_types.py                                 14      0   100%
+app\core\errors.py                                    172      1    99%
+app\core\handlers.py                                   31      2    94%
+app\core\logging.py                                    48      3    94%
+app\core\middleware.py                                 24      3    88%
+app\core\routing.py                                    35      2    94%
+app\core\security.py                                   65      0   100%
+app\core\storage_urls.py                               39      1    97%
+app\create_user.py                                     71      5    93%
+app\import_annuaire.py                                282     28    90%
+app\main.py                                            91     15    84%
+app\models\__init__.py                                 15      0   100%
+app\models\audit_log.py                                17      0   100%
+app\models\automatic_closure_run.py                    16      0   100%
+app\models\base.py                                     23      0   100%
+app\models\enums.py                                    37      0   100%
+app\models\forgotten_document.py                       25      0   100%
+app\models\organization.py                             22      0   100%
+app\models\referentiel.py                              32      0   100%
+app\models\refresh_token.py                            11      0   100%
+app\models\setting.py                                  13      0   100%
+app\models\user.py                                     36      4    89%
+app\models\user_session.py                             18      1    94%
+app\models\visit.py                                    42      0   100%
+app\models\visitor.py                                  26      0   100%
+app\purge_documents.py                                 40     40     0%
+app\purge_sessions.py                                  53     53     0%
+app\repositories\__init__.py                            0      0   100%
+app\repositories\audit_repository.py                   45      6    87%
+app\repositories\forgotten_document_repository.py      58     23    60%
+app\repositories\organization_repository.py            96     10    90%
+app\repositories\referentiel_repository.py            100      7    93%
+app\repositories\setting_repository.py                 36      1    97%
+app\repositories\user_repository.py                   104      5    95%
+app\repositories\visit_repository.py                  165      2    99%
+app\routers\__init__.py                                 0      0   100%
+app\routers\audit_logs.py                              22      0   100%
+app\routers\auth.py                                    34      1    97%
+app\routers\dashboard.py                               34      0   100%
+app\routers\forgotten_documents.py                     21      4    81%
+app\routers\ocr.py                                     18      0   100%
+app\routers\organizations.py                           64      2    97%
+app\routers\referentiels.py                            99      0   100%
+app\routers\settings.py                                36      2    94%
+app\routers\sync.py                                    54      1    98%
+app\routers\uploads.py                                 24      0   100%
+app\routers\users.py                                   43      0   100%
+app\routers\visitors.py                                13      0   100%
+app\routers\visits.py                                  55      0   100%
+app\schemas\__init__.py                                 0      0   100%
+app\schemas\audit.py                                   28      0   100%
+app\schemas\auth.py                                    38      0   100%
+app\schemas\common.py                                  24      0   100%
+app\schemas\dashboard.py                               53      0   100%
+app\schemas\forgotten_document.py                      34      0   100%
+app\schemas\ocr.py                                     31      0   100%
+app\schemas\organization.py                            96      0   100%
+app\schemas\referentiel.py                             68      0   100%
+app\schemas\referentiel_import.py                      48      0   100%
+app\schemas\setting.py                                 30      0   100%
+app\schemas\sync.py                                    30      0   100%
+app\schemas\upload.py                                   4      0   100%
+app\schemas\user.py                                    61      0   100%
+app\schemas\visit.py                                  203      1    99%
+app\seeds.py                                           99     99     0%
+app\services\__init__.py                                0      0   100%
+app\services\audit_service.py                          87      2    98%
+app\services\auth_service.py                          123      7    94%
+app\services\auto_closure_service.py                   90     21    77%
+app\services\dashboard_service.py                      85      8    91%
+app\services\document_purge_service.py                 59      0   100%
+app\services\export_service.py                         28      2    93%
+app\services\image_preprocessing.py                   198     14    93%
+app\services\mrz_ocr_service.py                        43      1    98%
+app\services\mrz_parser.py                            244     19    92%
+app\services\ocr_engine.py                             68     22    68%
+app\services\organization_service.py                  153     13    92%
+app\services\referentiel_admin_service.py             169     46    73%
+app\services\referentiel_import_service.py            254     24    91%
+app\services\setting_service.py                        49      1    98%
+app\services\spreadsheet.py                            66      8    88%
+app\services\storage_service.py                        70      4    94%
+app\services\user_admin_service.py                    180     26    86%
+app\services\visit_service.py                         341     29    91%
+-----------------------------------------------------------------------
+TOTAL                                                5949    679    89%
+728 passed in 1616.05s (0:26:56)

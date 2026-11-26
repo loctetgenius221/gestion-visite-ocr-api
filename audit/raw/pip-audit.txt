@@ -1,0 +1,98 @@
+WARNING:pip_audit._cli:--no-deps is supported, but users are encouraged to fully hash their pinned dependencies
+WARNING:pip_audit._cli:Consider using a tool like `pip-compile`: https://pip-tools.readthedocs.io/en/latest/#using-hashes
+Found 89 known vulnerabilities in 12 packages
+Name         Version   ID                  Fix Versions
+------------ --------- ------------------- ------------
+aiohttp      3.14.3    PYSEC-2026-4366     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4365     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4368     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4369     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4370     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4367     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4371     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4389     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4394     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4393     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4391     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4395     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4392     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4398     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4400     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4397     3.14.4
+aiohttp      3.14.3    PYSEC-2026-4399     3.14.4
+certifi      2026.7.22 PYSEC-2026-4320     2026.10.18
+certifi      2026.7.22 PYSEC-2026-4320     2026.10.18
+cryptography 49.0.0    PYSEC-2026-3552     50.0.0
+cryptography 49.0.0    PYSEC-2026-3552     50.0.0
+dnspython    2.8.0     CVE-2026-114605     2.9.0
+dnspython    2.8.0     CVE-2026-128089     2.9.2
+ecdsa        0.19.2    PYSEC-2026-1325
+ecdsa        0.19.2    PYSEC-2026-1325
+filelock     3.32.0    CVE-2026-112940     4.2.1
+filelock     3.32.0    CVE-2026-112913     4.2.1
+filelock     3.32.0    CVE-2026-112907     4.2.1
+filelock     3.32.0    CVE-2026-112938     4.2.1
+filelock     3.32.0    CVE-2026-112936     4.0.9
+filelock     3.32.0    CVE-2026-112910     4.2.1
+filelock     3.32.0    CVE-2026-112909     4.2.1
+filelock     3.32.0    CVE-2026-112911     4.2.1
+filelock     3.32.0    CVE-2026-112939     4.2.1
+filelock     3.32.0    CVE-2026-112915     4.2.1
+filelock     3.32.0    CVE-2026-112935     4.2.1
+filelock     3.32.0    CVE-2026-112908     4.2.1
+multidict    6.7.1     PYSEC-2026-4244     6.9.1
+pillow       12.3.0    PYSEC-2026-4327     13.0.0
+pillow       12.3.0    PYSEC-2026-4328     13.0.0
+pillow       12.3.0    PYSEC-2026-4326     13.0.0
+pillow       12.3.0    PYSEC-2026-4339     13.0.0
+pillow       12.3.0    PYSEC-2026-4340     13.0.0
+pillow       12.3.0    PYSEC-2026-4343     13.0.0
+pillow       12.3.0    PYSEC-2026-4334     13.0.0
+pillow       12.3.0    PYSEC-2026-4337     13.0.0
+pillow       12.3.0    PYSEC-2026-4341     13.0.0
+pillow       12.3.0    PYSEC-2026-4330     13.0.0
+pillow       12.3.0    PYSEC-2026-4338     13.0.0
+pillow       12.3.0    PYSEC-2026-4335     13.0.0
+pillow       12.3.0    PYSEC-2026-4336     13.0.0
+pillow       12.3.0    PYSEC-2026-4331     13.0.0
+pillow       12.3.0    PYSEC-2026-4332     13.0.0
+pillow       12.3.0    PYSEC-2026-4329     13.0.0
+pillow       12.3.0    PYSEC-2026-4333     13.0.0
+pillow       12.3.0    PYSEC-2026-4342     13.0.0
+pillow       12.3.0    PYSEC-2026-4363     13.0.0
+pillow       12.3.0    CVE-2026-112895     13.0.0
+pillow       12.3.0    CVE-2026-112400     13.0.0
+pillow       12.3.0    CVE-2026-112897     13.0.0
+pillow       12.3.0    CVE-2026-112395     13.0.0
+pillow       12.3.0    CVE-2026-112404     13.0.0
+pillow       12.3.0    CVE-2026-112899     13.0.0
+pillow       12.3.0    CVE-2026-112900     13.0.0
+pillow       12.3.0    CVE-2026-112893     13.0.0
+pillow       12.3.0    CVE-2026-112891     13.0.0
+pillow       12.3.0    CVE-2026-112390     13.0.0
+pillow       12.3.0    CVE-2026-112401     13.0.0
+pillow       12.3.0    CVE-2026-112391     13.0.0
+pillow       12.3.0    CVE-2026-112894     13.0.0
+pillow       12.3.0    CVE-2026-112406     13.0.0
+pillow       12.3.0    CVE-2026-112399     13.0.0
+pillow       12.3.0    CVE-2026-112892     13.0.0
+pillow       12.3.0    CVE-2026-112393     13.0.0
+pillow       12.3.0    CVE-2026-96638      13.0.0
+pillow       12.3.0    CVE-2026-96640      13.0.0
+pillow       12.3.0    CVE-2026-96778      13.0.0
+pillow       12.3.0    GHSA-78g4-xqwv-q3g8 13.0.0
+pillow       12.3.0    CVE-2026-128067     13.0.0
+pillow       12.3.0    CVE-2026-128066     13.0.0
+pyasn1       0.6.4     CVE-2026-119196     0.6.5
+pyasn1       0.6.4     CVE-2026-119194     0.6.5
+pyasn1       0.6.4     CVE-2026-119197     0.6.5
+pyasn1       0.6.4     CVE-2026-119195     0.6.5
+python-jose  3.5.0     PYSEC-2026-4298
+setuptools   83.0.0    GHSA-xmj3-9gf7-h52w 84.1.0
+urllib3      2.7.0     PYSEC-2026-4177     2.8.0
+urllib3      2.7.0     PYSEC-2026-4176     2.8.0
+urllib3      2.7.0     PYSEC-2026-4175     2.8.0
+
+Name Skip Reason
+---- -----------------------------------------------------
+-e - could not deduce package version from URL requirement

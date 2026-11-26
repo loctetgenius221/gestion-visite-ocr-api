@@ -1,0 +1,171 @@
+Run started:2026-11-26 08:59:04.843955+00:00
+
+Test results:
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\bootstrap.py:115:8
+114	        await session.commit()
+115	        assert organisation is not None
+116	        return organisation, creee, motifs_crees
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'changeme-dev-secret-key'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: app\core\config.py:9:17
+8	# Valeur livrée dans `.env.example` : utilisable en développement, jamais en production.
+9	DEV_JWT_SECRET = "changeme-dev-secret-key"
+10	MIN_JWT_SECRET_LENGTH = 32
+
+--------------------------------------------------
+>> Issue: [B324:hashlib] Use of weak MD5 hash for security. Consider usedforsecurity=False
+   Severity: High   Confidence: High
+   CWE: CWE-327 (https://cwe.mitre.org/data/definitions/327.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b324_hashlib.html
+   Location: app\core\storage_urls.py:68:16
+67	    materiau = f"{echeance}{chemin} {settings.STORAGE_URL_SIGNING_KEY}".encode()
+68	    condensat = hashlib.md5(materiau).digest()  # noqa: S324 - imposé par nginx secure_link
+69	    signature = base64.urlsafe_b64encode(condensat).rstrip(b"=").decode()
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\import_annuaire.py:425:8
+424	    for plan, agent in a_creer:
+425	        assert plan.existant is not None
+426	        agent.service_id = plan.existant.id
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'FpVisites@2026'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: app\seeds.py:43:22
+42	# d'environnement, jamais destiné à un déploiement réel.
+43	DEMO_AGENT_PASSWORD = "FpVisites@2026"
+44	MIN_SEED_PASSWORD_LENGTH = 12
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'user.password_reset'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: app\services\audit_service.py:50:26
+49	    USER_STATUS_CHANGED = "user.status_changed"
+50	    USER_PASSWORD_RESET = "user.password_reset"
+51	    USER_UNLOCKED = "user.unlocked"
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\services\auto_closure_service.py:252:8
+251	        refreshed = await self.docs.get_by_id(case.id)
+252	        assert refreshed is not None
+253	        return refreshed
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\services\ocr_engine.py:81:8
+80	        self.load()
+81	        assert self._ocr is not None
+82	        raw = self._ocr.predict(to_bgr(image))
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\services\referentiel_import_service.py:618:8
+617	        resolue = await organization_for_write(self.session, organization_id, actor)
+618	        assert resolue is not None  # `obligatoire=True` : la fonction a déjà levé sinon.
+619	        organization = await self.organizations.get_by_id(resolue)
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\services\visit_service.py:122:8
+121	        refreshed = await self.visits.get_by_id(visit.id)
+122	        assert refreshed is not None
+123	        return refreshed
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\services\visit_service.py:249:12
+248	        if payload.visitor_id is None:
+249	            assert payload.visitor is not None
+250	            return await self._upsert_visitor(payload.visitor)
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\services\visit_service.py:409:8
+408	        refreshed = await self.visits.get_by_id(visit.id)
+409	        assert refreshed is not None
+410	        return refreshed
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\services\visit_service.py:474:8
+473	        refreshed = await self.visits.get_by_id(visit.id)
+474	        assert refreshed is not None
+475	        return refreshed
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\services\visit_service.py:499:8
+498	        refreshed = await self.visits.get_by_id(visit.id)
+499	        assert refreshed is not None
+500	        return refreshed
+
+--------------------------------------------------
+>> Issue: [B101:assert_used] Use of assert detected. The enclosed code will be removed when compiling to optimised byte code.
+   Severity: Low   Confidence: High
+   CWE: CWE-703 (https://cwe.mitre.org/data/definitions/703.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b101_assert_used.html
+   Location: app\services\visit_service.py:922:8
+921	
+922	        assert sortie.client_reference is not None
+923	        if organisation is None:
+
+--------------------------------------------------
+
+Code scanned:
+	Total lines of code: 12793
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 14
+		Medium: 0
+		High: 1
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 0
+		Medium: 3
+		High: 12
+Files skipped (0):
